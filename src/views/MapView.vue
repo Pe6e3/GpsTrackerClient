@@ -1,32 +1,37 @@
 <template>
 	<div class="map-page">
-		<div class="map-toolbar">
-			<button class="btn btn-ghost" type="button" @click="goBack">← Назад</button>
+		<div class="map-bar">
+			<button class="btn btn-ghost btn-compact" type="button" @click="goBack">←</button>
 
-			<div class="form-group">
-				<label for="from">С</label>
-				<input id="from" v-model="from" type="datetime-local" :disabled="loading" />
-			</div>
+			<input
+				id="from"
+				v-model="from"
+				class="map-input map-input-date"
+				type="datetime-local"
+				aria-label="Начало периода"
+				:disabled="loading"
+			/>
 
-			<div class="form-group">
-				<label for="to">По</label>
-				<input id="to" v-model="to" type="datetime-local" :disabled="loading" />
-			</div>
+			<input
+				id="to"
+				v-model="to"
+				class="map-input map-input-date"
+				type="datetime-local"
+				aria-label="Конец периода"
+				:disabled="loading"
+			/>
 
-			<button class="btn btn-primary" type="button" :disabled="loading" @click="loadTrack">
-				{{ loading ? 'Загрузка…' : 'Показать трек' }}
+			<button class="btn btn-primary btn-compact" type="button" :disabled="loading" @click="loadTrack">
+				{{ loading ? '…' : 'Трек' }}
 			</button>
+
+			<div v-if="track" class="map-bar-meta">
+				<span class="map-bar-meta-name">{{ track.deviceName }} · {{ track.deviceId }}</span>
+				<span>· {{ track.points.length }} т.</span>
+			</div>
 		</div>
 
-		<div v-if="track" class="track-info">
-			<span><strong>{{ track.deviceName }}</strong> ({{ track.deviceId }})</span>
-			<span>Точек: {{ track.points.length }}</span>
-			<span v-if="track.points.length">
-				{{ track.points[0].timeLocal }} — {{ track.points[track.points.length - 1].timeLocal }}
-			</span>
-		</div>
-
-		<p v-if="error" class="error-msg" style="margin: 12px 20px">{{ error }}</p>
+		<p v-if="error" class="map-error">{{ error }}</p>
 
 		<div ref="mapEl" class="map-container"></div>
 	</div>
@@ -77,13 +82,17 @@ export default {
 		},
 	},
 	mounted() {
+		document.body.classList.add('map-route')
 		this.initDefaultDates()
 		this.$nextTick(() => {
 			this.initMap()
 			this.loadTrack()
 		})
+		window.addEventListener('resize', this.handleMapResize)
 	},
 	beforeUnmount() {
+		document.body.classList.remove('map-route')
+		window.removeEventListener('resize', this.handleMapResize)
 		if (this.map) {
 			this.map.remove()
 			this.map = null
@@ -109,6 +118,10 @@ export default {
 			const [hh, mm] = (timePart || '00:00').split(':')
 			return `${y}-${m}-${d} ${hh}:${mm}:00`
 		},
+		handleMapResize() {
+			if (this.map)
+				this.map.invalidateSize()
+		},
 		initMap() {
 			if (this.map) return
 
@@ -122,6 +135,7 @@ export default {
 			}).addTo(this.map)
 
 			this.layerGroup = L.layerGroup().addTo(this.map)
+			this.$nextTick(() => this.handleMapResize())
 		},
 		goBack() {
 			this.$router.push({ name: 'devices' })
@@ -143,6 +157,7 @@ export default {
 					this.$router.push({ name: 'login' })
 			} finally {
 				this.loading = false
+				this.$nextTick(() => this.handleMapResize())
 			}
 		},
 		renderTrack() {
@@ -184,7 +199,10 @@ export default {
 				})
 			}
 
-			this.map.fitBounds(polyline.getBounds(), { padding: [40, 40] })
+			this.$nextTick(() => {
+				this.handleMapResize()
+				this.map.fitBounds(polyline.getBounds(), { padding: [40, 40] })
+			})
 		},
 		pointPopup(point, label) {
 			const title = label ? `<strong>${label}</strong><br>` : ''
@@ -194,8 +212,10 @@ export default {
 }
 </script>
 
-<style>
-.leaflet-container {
+<style scoped>
+.map-container :deep(.leaflet-container) {
+	height: 100%;
+	width: 100%;
 	background: #1a2332;
 	font-family: inherit;
 }
