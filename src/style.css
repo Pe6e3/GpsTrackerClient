@@ -277,9 +277,9 @@ body {
 }
 
 .map-input-date {
-	width: 8.6rem;
-	min-width: 8.6rem;
-	max-width: 8.6rem;
+	width: 170px;
+	min-width: 170px;
+	max-width: 170px;
 }
 
 .map-input:focus {
@@ -318,6 +318,174 @@ body {
 	position: relative;
 }
 
+.map-leaflet {
+	height: 100%;
+	width: 100%;
+}
+
+.playback-panel {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1000;
+	padding: 6px 10px 10px;
+	background: rgba(15, 20, 25, 0.92);
+	border-top: 1px solid var(--border);
+	backdrop-filter: blur(6px);
+}
+
+.playback-main {
+	display: flex;
+	align-items: stretch;
+	gap: 8px;
+}
+
+.playback-chart-body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: stretch;
+	height: 88px;
+	gap: 0;
+}
+
+.playback-controls {
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 6px;
+	width: 72px;
+}
+
+.playback-chart-y-axis {
+	width: 28px;
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	padding: 0 4px 0 0;
+}
+
+.playback-chart-y-label {
+	font-size: 9px;
+	line-height: 1;
+	color: var(--text-muted);
+	text-align: right;
+}
+
+.playback-chart-plot {
+	flex: 1;
+	min-width: 0;
+	position: relative;
+	height: 88px;
+	cursor: crosshair;
+}
+
+.playback-chart-canvas {
+	display: block;
+	width: 100%;
+	height: 88px;
+	border-radius: 4px;
+	background: rgba(0, 0, 0, 0.2);
+}
+
+.playback-chart-cursor {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	margin-left: -1px;
+	background: #ef4444;
+	box-shadow: 0 0 4px rgba(239, 68, 68, 0.6);
+	pointer-events: none;
+}
+
+.playback-btn {
+	flex-shrink: 0;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--surface-hover);
+	color: var(--text);
+	font-size: 0.85rem;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.playback-btn:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.playback-btn-close {
+	font-size: 0.75rem;
+}
+
+.playback-speed {
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	width: 100%;
+}
+
+.playback-speed-label {
+	font-size: 0.6rem;
+	color: var(--text-muted);
+	white-space: nowrap;
+	line-height: 1;
+	margin-bottom: 6px;
+	text-align: center;
+}
+
+.playback-speed-slider {
+	width: 100%;
+	height: 3px;
+	accent-color: var(--accent);
+	cursor: pointer;
+	margin-top: 2px;
+}
+
+.playback-info {
+	position: absolute;
+	right: 10px;
+	bottom: 54px;
+	z-index: 1001;
+	padding: 6px 10px;
+	background: rgba(15, 20, 25, 0.88);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	backdrop-filter: blur(6px);
+	font-size: 0.75rem;
+	line-height: 1.35;
+	pointer-events: none;
+	transition: bottom 0.2s ease;
+}
+
+.map-container.playback-active .playback-info {
+	bottom: 108px;
+}
+
+.playback-info-time {
+	color: var(--text);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.playback-info-speed {
+	color: var(--text-muted);
+	font-size: 0.7rem;
+	margin-top: 2px;
+	white-space: nowrap;
+}
+
 .map-error {
 	flex-shrink: 0;
 	margin: 0;
@@ -342,9 +510,9 @@ body {
 	}
 
 	.map-input-date {
-		width: 9.4rem;
-		min-width: 9.4rem;
-		max-width: 9.4rem;
+		width: 188px;
+		min-width: 188px;
+		max-width: 188px;
 	}
 
 	.map-bar .btn-compact {
@@ -359,5 +527,58 @@ body {
 
 	.map-container {
 		min-height: 0;
+	}
+
+	.playback-panel {
+		padding: 6px 8px 8px;
+	}
+
+	.playback-main {
+		gap: 6px;
+	}
+
+	.playback-controls {
+		width: 56px;
+		gap: 4px;
+	}
+
+	.playback-chart-body {
+		height: 72px;
+	}
+
+	.playback-chart-plot {
+		height: 72px;
+	}
+
+	.playback-chart-canvas {
+		height: 72px;
+	}
+
+	.playback-chart-y-label {
+		font-size: 8px;
+	}
+
+	.playback-speed {
+		width: 56px;
+	}
+
+	.playback-speed-label {
+		font-size: 0.55rem;
+		margin-bottom: 5px;
+	}
+
+	.playback-info {
+		right: 8px;
+		bottom: 50px;
+		padding: 5px 8px;
+		font-size: 0.65rem;
+	}
+
+	.map-container.playback-active .playback-info {
+		bottom: 88px;
+	}
+
+	.playback-info-speed {
+		font-size: 0.6rem;
 	}
 }
