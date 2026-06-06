@@ -1,55 +1,125 @@
 <template>
 	<div class="map-page">
-		<div class="map-bar">
-			<button class="btn btn-ghost btn-compact" type="button" @click="goBack">←</button>
+		<header class="map-toolbar">
+			<div class="map-bar map-toolbar-desktop">
+				<button class="btn btn-ghost btn-compact" type="button" @click="goBack">←</button>
 
-			<input
-				id="from"
-				v-model="from"
-				class="map-input map-input-date"
-				type="datetime-local"
-				aria-label="Начало периода"
-				:disabled="loading"
-			/>
+				<input
+					id="from"
+					v-model="from"
+					class="map-input map-input-date"
+					type="datetime-local"
+					aria-label="Начало периода"
+					:disabled="loading"
+				/>
 
-			<input
-				id="to"
-				v-model="to"
-				class="map-input map-input-date"
-				type="datetime-local"
-				aria-label="Конец периода"
-				:disabled="loading"
-			/>
+				<input
+					id="to"
+					v-model="to"
+					class="map-input map-input-date"
+					type="datetime-local"
+					aria-label="Конец периода"
+					:disabled="loading"
+				/>
 
-			<button class="btn btn-primary btn-compact" type="button" :disabled="loading" @click="loadTrack">
-				{{ loading ? '…' : 'Трек' }}
-			</button>
+				<button class="btn btn-primary btn-compact" type="button" :disabled="loading" @click="applyTrack">
+					{{ loading ? '…' : 'Обновить' }}
+				</button>
 
-			<button
-				v-if="canPlay"
-				class="btn btn-secondary btn-compact"
-				type="button"
-				@click="openPlayback"
-			>
-				▶
-			</button>
-
-			<div v-if="track" class="map-bar-meta">
-				<span class="map-bar-meta-name">{{ track.deviceName }} · {{ track.deviceId }}</span>
-			</div>
-		</div>
-
-		<p v-if="error" class="map-error">{{ error }}</p>
-
-		<div class="map-container" :class="{ 'playback-active': playbackActive }">
-			<div ref="mapEl" class="map-leaflet"></div>
-
-			<div v-if="playbackActive && playbackInfo" class="playback-info">
-				<div class="playback-info-time">{{ playbackInfo.time }}</div>
-				<div v-if="playbackInfo.speed" class="playback-info-speed">{{ playbackInfo.speed }}</div>
+				<div v-if="track" class="map-bar-meta">
+					<span class="map-bar-meta-name">{{ track.deviceName }} · {{ track.deviceId }}</span>
+				</div>
 			</div>
 
-			<div v-if="playbackActive" class="playback-panel">
+			<div class="map-toolbar-mobile">
+				<div class="map-toolbar-bar">
+					<button
+						class="map-toolbar-toggle"
+						type="button"
+						:aria-label="menuOpen ? 'Закрыть меню' : 'Открыть меню'"
+						:aria-expanded="menuOpen"
+						@click="toggleMenu"
+					>
+						{{ menuOpen ? '✕' : '☰' }}
+					</button>
+					<span v-if="track" class="map-toolbar-title">{{ track.deviceName }} · {{ track.deviceId }}</span>
+					<span v-else class="map-toolbar-title">Карта</span>
+				</div>
+
+				<div class="map-toolbar-drawer" :class="{ 'map-toolbar-drawer--open': menuOpen }">
+					<div class="map-toolbar-drawer-inner">
+						<button class="btn btn-ghost map-toolbar-nav" type="button" @click="goBack">← К устройствам</button>
+
+						<div class="map-toolbar-filters">
+							<div class="map-toolbar-field">
+								<label for="from-mobile">Период с</label>
+								<input
+									id="from-mobile"
+									v-model="from"
+									class="map-input map-input-date"
+									type="datetime-local"
+									:disabled="loading"
+								/>
+							</div>
+							<div class="map-toolbar-field">
+								<label for="to-mobile">Период по</label>
+								<input
+									id="to-mobile"
+									v-model="to"
+									class="map-input map-input-date"
+									type="datetime-local"
+									:disabled="loading"
+								/>
+							</div>
+						</div>
+
+						<button class="btn btn-primary" type="button" :disabled="loading" @click="applyTrack">
+							{{ loading ? 'Обновление…' : 'Обновить' }}
+						</button>
+
+						<div v-if="hasTrack" class="map-toolbar-section">
+							<div class="map-toolbar-section-title">Проигрывание</div>
+
+							<button
+								class="btn btn-secondary map-toolbar-play-btn"
+								type="button"
+								@click="togglePlay"
+							>
+								{{ playing ? '⏸ Пауза' : '▶ Пуск' }}
+							</button>
+
+							<div class="map-toolbar-field">
+								<label for="playback-speed-mobile">Скорость · {{ speedLabel }}</label>
+								<input
+									id="playback-speed-mobile"
+									class="playback-speed-slider"
+									type="range"
+									min="0"
+									max="100"
+									v-model.number="speedSlider"
+								/>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</header>
+
+		<div class="map-body">
+			<div v-if="menuOpen" class="map-toolbar-backdrop" @click="closeMenu"></div>
+
+			<p v-if="error" class="map-error">{{ error }}</p>
+
+			<div class="map-container">
+				<div ref="mapEl" class="map-leaflet"></div>
+
+				<div v-if="hasTrack && playbackInfo" class="playback-info">
+					<div class="playback-info-time">{{ playbackInfo.time }}</div>
+					<div v-if="playbackInfo.speed" class="playback-info-speed">{{ playbackInfo.speed }}</div>
+				</div>
+			</div>
+
+			<div v-if="hasTrack" class="speed-chart-panel">
 				<div class="playback-main">
 					<div class="playback-chart-body">
 						<div class="playback-chart-y-axis">
@@ -59,28 +129,40 @@
 								class="playback-chart-y-label"
 							>{{ v }}</span>
 						</div>
-						<div
-							class="playback-chart-plot"
-							@mousedown.prevent="onChartPointerDown"
-							@touchstart.prevent="onChartTouchStart"
-						>
-							<canvas ref="speedChartCanvas" class="playback-chart-canvas"></canvas>
-							<div class="playback-chart-cursor" :style="{ left: chartCursorLeft }"></div>
+						<div class="playback-chart-plot-column">
+							<div
+								class="playback-chart-speed-area"
+								@mousedown.prevent="onChartPointerDown"
+								@touchstart.prevent="onChartTouchStart"
+							>
+								<canvas ref="speedChartCanvas" class="playback-chart-canvas"></canvas>
+								<div class="playback-chart-cursor" :style="{ left: chartCursorLeft }"></div>
+							</div>
+							<div class="playback-chart-x-axis">
+								<span
+									v-for="tick in timeAxisTicks"
+									:key="tick.time"
+									class="playback-chart-x-label"
+									:style="tick.style"
+								>{{ tick.label }}</span>
+							</div>
 						</div>
 					</div>
 
-					<div class="playback-controls">
-						<button class="playback-btn playback-btn-close" type="button" aria-label="Закрыть" @click="closePlayback">
-							✕
-						</button>
-
-						<button class="playback-btn" type="button" :aria-label="playing ? 'Пауза' : 'Плей'" @click="togglePlay">
+					<div class="playback-controls playback-controls--desktop">
+						<button
+							class="playback-btn"
+							type="button"
+							:aria-label="playing ? 'Пауза' : 'Пуск'"
+							@click="togglePlay"
+						>
 							{{ playing ? '⏸' : '▶' }}
 						</button>
 
 						<div class="playback-speed">
 							<span class="playback-speed-label">{{ speedLabel }}</span>
 							<input
+								id="playback-speed-desktop"
 								class="playback-speed-slider"
 								type="range"
 								min="0"
@@ -107,6 +189,20 @@ const CHART_SPEED_CAP = 180
 const CHART_SPEED_FLOOR = 60
 const CHART_SPEED_GRID = 20
 const CHART_HEIGHT = 88
+const CHART_TIME_AXIS_HEIGHT = 16
+
+const TIME_AXIS_STEPS_MS = [
+	3600000,
+	3 * 3600000,
+	6 * 3600000,
+	12 * 3600000,
+	86400000,
+	3 * 86400000,
+	7 * 86400000,
+	14 * 86400000,
+	30 * 86400000,
+	90 * 86400000,
+]
 
 const startIcon = L.divIcon({
 	className: 'track-marker-start',
@@ -133,6 +229,7 @@ export default {
 	name: 'MapView',
 	data() {
 		return {
+			menuOpen: false,
 			from: '',
 			to: '',
 			track: null,
@@ -143,7 +240,6 @@ export default {
 			playbackLayer: null,
 			pointTimes: [],
 			totalDuration: 0,
-			playbackActive: false,
 			playing: false,
 			playbackTrackTime: 0,
 			speedSlider: 25,
@@ -156,14 +252,18 @@ export default {
 			backgroundLine: null,
 			animFrameId: null,
 			lastFrameTime: 0,
+			chartResizeObserver: null,
+			chartDrawTimer: null,
+			timeAxisTicks: [],
+			desktopMenuGuard: null,
 		}
 	},
 	computed: {
 		deviceId() {
 			return this.$route.params.deviceId
 		},
-		canPlay() {
-			return this.track?.points?.length > 1 && !this.playbackActive
+		hasTrack() {
+			return (this.track?.points?.length || 0) > 0
 		},
 		playbackSpeed() {
 			const logMin = Math.log(PLAYBACK_SPEED_MIN)
@@ -197,18 +297,46 @@ export default {
 			return labels
 		},
 	},
+	watch: {
+		hasTrack(ready) {
+			if (ready) {
+				this.$nextTick(() => {
+					this.updateViewportMetrics()
+					this.scheduleDrawSpeedChart()
+					this.bindChartResizeObserver()
+				})
+			} else {
+				this.unbindChartResizeObserver()
+				this.timeAxisTicks = []
+			}
+		},
+	},
 	mounted() {
 		document.body.classList.add('map-route')
 		this.initDefaultDates()
 		this.$nextTick(() => {
 			this.initMap()
 			this.loadTrack()
+			this.updateViewportMetrics()
 		})
 		window.addEventListener('resize', this.handleMapResize)
+		window.addEventListener('orientationchange', this.onViewportChange)
+		window.visualViewport?.addEventListener('resize', this.onViewportChange)
+		window.visualViewport?.addEventListener('scroll', this.onViewportChange)
+		this.bindDesktopMenuGuard()
 	},
 	beforeUnmount() {
 		document.body.classList.remove('map-route')
 		window.removeEventListener('resize', this.handleMapResize)
+		window.removeEventListener('orientationchange', this.onViewportChange)
+		window.visualViewport?.removeEventListener('resize', this.onViewportChange)
+		window.visualViewport?.removeEventListener('scroll', this.onViewportChange)
+		this.unbindDesktopMenuGuard()
+		this.unbindChartResizeObserver()
+		if (this.chartDrawTimer) {
+			clearTimeout(this.chartDrawTimer)
+			this.chartDrawTimer = null
+		}
 		this.unbindChartDrag()
 		this.stopPlaybackLoop()
 		if (this.map) {
@@ -327,7 +455,7 @@ export default {
 						lat: p0.lat + (p1.lat - p0.lat) * t,
 						lon: p0.lon + (p1.lon - p0.lon) * t,
 						direction: this.lerpAngle(d0, d1, t),
-						time: p0.timeLocal,
+						time: t >= 0.5 ? p1.timeLocal : p0.timeLocal,
 						speed: this.getPointSpeed(t >= 0.5 ? p1 : p0),
 						progress: trackTimeMs / this.totalDuration,
 						segmentIndex: i,
@@ -392,22 +520,219 @@ export default {
 				this.updateVehicleRotation(state.direction)
 			}
 		},
-		handleMapResize() {
-			if (this.map)
-				this.map.invalidateSize()
-			if (this.playbackActive)
-				this.drawSpeedChart()
+		applyTrackVisibility() {
+			if (!this.map) return
+
+			for (const layer of [this.staticLayer, this.playbackLayer]) {
+				if (!layer) continue
+				if (!this.map.hasLayer(layer))
+					this.map.addLayer(layer)
+			}
 		},
-		drawSpeedChart() {
+		handleMapResize() {
+			if (window.innerWidth > 768)
+				this.closeMenu()
+			this.updateViewportMetrics()
+		},
+		bindDesktopMenuGuard() {
+			this.desktopMenuGuard = window.matchMedia('(min-width: 769px)')
+			this.desktopMenuGuard.addEventListener('change', this.onDesktopMenuGuard)
+		},
+		unbindDesktopMenuGuard() {
+			this.desktopMenuGuard?.removeEventListener('change', this.onDesktopMenuGuard)
+			this.desktopMenuGuard = null
+		},
+		onDesktopMenuGuard(e) {
+			if (e.matches)
+				this.closeMenu()
+		},
+		onViewportChange() {
+			this.updateViewportMetrics()
+		},
+		updateViewportMetrics() {
+			const vv = window.visualViewport
+			const height = Math.round(vv?.height || window.innerHeight)
+			if (height > 0)
+				document.documentElement.style.setProperty('--app-height', `${height}px`)
+
+			this.$nextTick(() => {
+				const panel = this.$el?.querySelector?.('.speed-chart-panel')
+				if (panel) {
+					const panelHeight = panel.offsetHeight
+					if (panelHeight > 0)
+						document.documentElement.style.setProperty('--speed-chart-panel-height', `${panelHeight}px`)
+				}
+
+				if (this.map)
+					this.map.invalidateSize()
+				if (this.hasTrack)
+					this.scheduleDrawSpeedChart()
+			})
+		},
+		bindChartResizeObserver() {
+			this.unbindChartResizeObserver()
+			const plot = this.$refs.speedChartCanvas?.parentElement
+			if (!plot || typeof ResizeObserver === 'undefined') return
+
+			this.chartResizeObserver = new ResizeObserver(() => {
+				this.scheduleDrawSpeedChart()
+			})
+			this.chartResizeObserver.observe(plot)
+		},
+		unbindChartResizeObserver() {
+			if (this.chartResizeObserver) {
+				this.chartResizeObserver.disconnect()
+				this.chartResizeObserver = null
+			}
+		},
+		scheduleDrawSpeedChart() {
+			if (this.chartDrawTimer)
+				clearTimeout(this.chartDrawTimer)
+
+			this.chartDrawTimer = setTimeout(() => {
+				this.chartDrawTimer = null
+				this.drawSpeedChart()
+			}, 50)
+		},
+		getTimeAxisFont(plotWidth) {
+			const size = plotWidth <= 480 ? 8 : 9
+			return `${size}px Segoe UI, system-ui, -apple-system, sans-serif`
+		},
+		getTimeAxisMinGap(plotWidth) {
+			return plotWidth <= 480 ? 36 : 52
+		},
+		alignTimeTick(time, stepMs) {
+			if (stepMs >= 86400000) {
+				const d = new Date(time)
+				d.setHours(0, 0, 0, 0)
+				let t = d.getTime()
+				while (t < time)
+					t += stepMs
+				return t
+			}
+
+			if (stepMs >= 3600000) {
+				const d = new Date(time)
+				d.setMinutes(0, 0, 0)
+				const stepHours = stepMs / 3600000
+				let hours = d.getHours()
+				hours = Math.ceil(hours / stepHours) * stepHours
+				if (hours >= 24) {
+					d.setDate(d.getDate() + 1)
+					hours = 0
+				}
+				d.setHours(hours)
+				let t = d.getTime()
+				if (t < time)
+					t += stepMs
+				return t
+			}
+
+			return Math.ceil(time / stepMs) * stepMs
+		},
+		buildTimeTicks(baseTime, endTime, stepMs) {
+			const ticks = []
+			let t = this.alignTimeTick(baseTime, stepMs)
+			while (t <= endTime) {
+				ticks.push(t)
+				t += stepMs
+			}
+			return ticks
+		},
+		formatTimeAxisLabel(time, stepMs, durationMs) {
+			const d = new Date(time)
+			const pad = (n) => String(n).padStart(2, '0')
+
+			if (stepMs >= 86400000) {
+				if (durationMs > 90 * 86400000)
+					return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}`
+				return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`
+			}
+
+			return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+		},
+		timeTicksFit(ticks, baseTime, duration, plotWidth, ctx, stepMs, minGap) {
+			if (ticks.length < 2)
+				return true
+
+			for (let i = 1; i < ticks.length; i++) {
+				const x = ((ticks[i] - baseTime) / duration) * plotWidth
+				const prevX = ((ticks[i - 1] - baseTime) / duration) * plotWidth
+				const label = this.formatTimeAxisLabel(ticks[i], stepMs, duration)
+				const prevLabel = this.formatTimeAxisLabel(ticks[i - 1], stepMs, duration)
+				const w = ctx.measureText(label).width
+				const prevW = ctx.measureText(prevLabel).width
+				if (x - prevX < prevW / 2 + w / 2 + minGap)
+					return false
+			}
+
+			return true
+		},
+		getTimeAxisLabelStyle(ratio) {
+			if (ratio <= 0.06)
+				return { left: `${ratio * 100}%`, transform: 'none' }
+			if (ratio >= 0.94)
+				return { left: `${ratio * 100}%`, transform: 'translateX(-100%)' }
+			return { left: `${ratio * 100}%`, transform: 'translateX(-50%)' }
+		},
+		computeTimeAxis(plotWidth, ctx) {
+			if (!this.hasTrack || plotWidth <= 0 || !ctx) {
+				this.timeAxisTicks = []
+				return { stepMs: 0, ticks: [] }
+			}
+
+			const baseTime = this.pointTimes[0]
+			const endTime = baseTime + this.totalDuration
+			const duration = this.totalDuration || 1
+			const minGap = this.getTimeAxisMinGap(plotWidth)
+			const font = this.getTimeAxisFont(plotWidth)
+
+			ctx.save()
+			ctx.font = font
+
+			let chosenStep = TIME_AXIS_STEPS_MS[TIME_AXIS_STEPS_MS.length - 1]
+			let chosenTicks = []
+
+			for (const stepMs of TIME_AXIS_STEPS_MS) {
+				const ticks = this.buildTimeTicks(baseTime, endTime, stepMs)
+				if (!ticks.length)
+					continue
+				if (this.timeTicksFit(ticks, baseTime, duration, plotWidth, ctx, stepMs, minGap)) {
+					chosenStep = stepMs
+					chosenTicks = ticks
+					break
+				}
+			}
+
+			if (!chosenTicks.length)
+				chosenTicks = this.buildTimeTicks(baseTime, endTime, chosenStep)
+
+			this.timeAxisTicks = chosenTicks.map((t) => {
+				const ratio = (t - baseTime) / duration
+				return {
+					time: t,
+					label: this.formatTimeAxisLabel(t, chosenStep, duration),
+					style: this.getTimeAxisLabelStyle(ratio),
+				}
+			})
+
+			ctx.restore()
+			return { stepMs: chosenStep, ticks: chosenTicks }
+		},
+		drawSpeedChart(retry = 0) {
 			const canvas = this.$refs.speedChartCanvas
-			if (!canvas || !this.playbackActive || !this.track?.points?.length) return
+			if (!canvas || !this.hasTrack) return
 
 			const wrap = canvas.parentElement
 			if (!wrap) return
 
 			const width = wrap.clientWidth
 			const height = wrap.clientHeight || CHART_HEIGHT
-			if (width <= 0 || height <= 0) return
+			if (width <= 0 || height <= 0) {
+				if (retry < 8)
+					requestAnimationFrame(() => this.drawSpeedChart(retry + 1))
+				return
+			}
 
 			const chartSpeedMax = this.chartSpeedMax
 			const dpr = window.devicePixelRatio || 1
@@ -419,6 +744,8 @@ export default {
 			const ctx = canvas.getContext('2d')
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 			ctx.clearRect(0, 0, width, height)
+
+			const timeAxis = this.computeTimeAxis(width, ctx)
 
 			const padY = 0
 			const chartH = height - padY * 2
@@ -435,6 +762,14 @@ export default {
 				ctx.beginPath()
 				ctx.moveTo(0, y)
 				ctx.lineTo(width, y)
+				ctx.stroke()
+			}
+
+			for (const t of timeAxis.ticks) {
+				const x = ((t - baseTime) / duration) * width
+				ctx.beginPath()
+				ctx.moveTo(x, padY)
+				ctx.lineTo(x, height - padY)
 				ctx.stroke()
 			}
 
@@ -541,7 +876,18 @@ export default {
 			this.$nextTick(() => this.handleMapResize())
 		},
 		goBack() {
+			this.closeMenu()
 			this.$router.push({ name: 'devices' })
+		},
+		toggleMenu() {
+			this.menuOpen = !this.menuOpen
+		},
+		closeMenu() {
+			this.menuOpen = false
+		},
+		async applyTrack() {
+			await this.loadTrack()
+			this.closeMenu()
 		},
 		stopPlaybackLoop() {
 			if (this.animFrameId) {
@@ -556,19 +902,17 @@ export default {
 			this.playbackLayer?.clearLayers()
 			this.progressLine = null
 			this.vehicleMarker = null
-			this.playbackActive = false
 			this.playbackInfo = null
 			this.playbackTrackTime = 0
 			this.scrubberValue = 0
 			this.scrubbing = false
 		},
-		openPlayback() {
+		initPlayback() {
 			if (!this.track?.points?.length) return
 
 			this.buildTimeline()
-			this.playbackActive = true
 			this.playbackTrackTime = 0
-			this.playing = true
+			this.playing = false
 			this.scrubberValue = 0
 
 			this.playbackLayer.clearLayers()
@@ -583,20 +927,15 @@ export default {
 				.addTo(this.playbackLayer)
 
 			this.applyPlaybackState(0)
-			this.lastFrameTime = 0
-			this.animFrameId = requestAnimationFrame((ts) => this.tick(ts))
+			this.applyTrackVisibility()
 			this.$nextTick(() => {
-				this.drawSpeedChart()
+				this.bindChartResizeObserver()
+				this.scheduleDrawSpeedChart()
 				this.handleMapResize()
 			})
 		},
-		closePlayback() {
-			this.unbindChartDrag()
-			this.resetPlaybackLayers()
-			this.$nextTick(() => this.handleMapResize())
-		},
 		togglePlay() {
-			if (!this.playbackActive) return
+			if (!this.hasTrack) return
 
 			if (this.playing) {
 				this.stopPlaybackLoop()
@@ -611,7 +950,7 @@ export default {
 			this.animFrameId = requestAnimationFrame((ts) => this.tick(ts))
 		},
 		tick(timestamp) {
-			if (!this.playing || !this.playbackActive) return
+			if (!this.playing || !this.hasTrack) return
 
 			if (!this.lastFrameTime)
 				this.lastFrameTime = timestamp
@@ -635,7 +974,9 @@ export default {
 		async loadTrack() {
 			this.loading = true
 			this.error = ''
+			this.track = null
 			this.resetPlaybackLayers()
+			this.staticLayer?.clearLayers()
 
 			try {
 				const params = {}
@@ -687,8 +1028,9 @@ export default {
 				.addTo(this.staticLayer)
 
 			this.$nextTick(() => {
-				this.handleMapResize()
 				this.map.fitBounds(this.backgroundLine.getBounds(), { padding: [40, 40] })
+				this.initPlayback()
+				this.$nextTick(() => this.handleMapResize())
 			})
 		},
 		pointPopup(point, label) {
