@@ -189,9 +189,26 @@ body {
 	font-size: 1.4rem;
 }
 
+.devices-page {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	padding: 24px 16px;
+	max-width: 720px;
+	margin: 0 auto;
+	width: 100%;
+}
+
+.devices-content {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	flex: 1;
+}
+
 .device-list {
 	width: 100%;
-	max-width: 720px;
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
@@ -201,7 +218,8 @@ body {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 18px 20px;
+	gap: 16px;
+	padding: 16px 18px;
 	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -215,6 +233,11 @@ body {
 	transform: translateY(-1px);
 }
 
+.device-item-main {
+	min-width: 0;
+	flex: 1;
+}
+
 .device-name {
 	font-size: 1.15rem;
 	font-weight: 600;
@@ -224,6 +247,89 @@ body {
 	color: var(--text-muted);
 	font-size: 0.85rem;
 	font-family: monospace;
+	margin-top: 2px;
+}
+
+.device-stats {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 0;
+	margin-top: 8px;
+	font-size: 0.82rem;
+	color: var(--text-muted);
+}
+
+.device-stats-sep {
+	margin: 0 6px;
+	opacity: 0.45;
+}
+
+.device-stats-online {
+	color: var(--success);
+}
+
+.device-stats-idle {
+	color: #eab308;
+}
+
+.device-stats-offline {
+	color: var(--text-muted);
+}
+
+.device-arrow {
+	flex-shrink: 0;
+	color: var(--text-muted);
+	font-size: 1.1rem;
+}
+
+.service-panel {
+	width: 100%;
+	margin-top: auto;
+	padding-top: 20px;
+}
+
+.service-panel-title {
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-bottom: 10px;
+}
+
+.service-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+	gap: 8px;
+}
+
+.service-item {
+	padding: 10px 12px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.service-label {
+	font-size: 0.72rem;
+	color: var(--text-muted);
+}
+
+.service-value {
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: var(--text);
+	font-variant-numeric: tabular-nums;
+}
+
+.devices-page .page-header {
+	width: 100%;
+	max-width: none;
+	margin-bottom: 20px;
 }
 
 .loading {
@@ -580,5 +686,21 @@ body {
 
 	.playback-info-speed {
 		font-size: 0.6rem;
+	}
+
+	.devices-page {
+		padding: 16px 12px;
+	}
+
+	.device-item {
+		padding: 14px 14px;
+	}
+
+	.device-stats {
+		font-size: 0.75rem;
+	}
+
+	.service-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
