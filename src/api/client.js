@@ -86,3 +86,27 @@ export function getTrack(deviceId, params = {}) {
 	const path = `/tracks/${encodeURIComponent(deviceId)}${qs ? `?${qs}` : ''}`
 	return request(path)
 }
+
+export function getGeofences() {
+	return request('/geofences').then((data) => data.geofences || [])
+}
+
+export function createGeofence(payload) {
+	return request('/geofences', {
+		method: 'POST',
+		body: JSON.stringify(payload),
+	})
+}
+
+export function updateGeofence(id, payload) {
+	return request(`/geofences/${id}`, {
+		method: 'PUT',
+		body: JSON.stringify(payload),
+	})
+}
+
+export function deleteGeofence(id) {
+	return request(`/geofences/${id}`, {
+		method: 'DELETE',
+	})
+}

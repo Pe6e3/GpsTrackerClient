@@ -26,6 +26,55 @@
 					{{ loading ? '…' : 'Обновить' }}
 				</button>
 
+				<button
+					class="btn btn-compact"
+					:class="geozonesVisible ? 'btn-primary' : 'btn-secondary'"
+					type="button"
+					@click="toggleGeozonesVisible"
+				>
+					⬡ Геозоны
+				</button>
+
+				<button
+					v-if="geozonesVisible && !geozoneDrawingMode"
+					class="btn btn-secondary btn-compact geozone-add-btn"
+					type="button"
+					title="Добавить геозону"
+					@click="startAddGeozone"
+				>+</button>
+
+				<div
+					v-if="geozonesVisible && selectedGeozone && !geozoneDrawingMode"
+					class="geozone-toolbar-panel geozone-toolbar-panel--desktop"
+				>
+					<span class="geozone-selected-name">{{ selectedGeozone.name }}</span>
+					<button class="btn btn-ghost btn-compact geozone-delete-btn" type="button" @click="removeGeozone(selectedGeozone.id)">
+						🗑 Удалить
+					</button>
+				</div>
+
+				<div v-if="geozoneDrawingMode" class="geozone-toolbar-panel geozone-toolbar-panel--desktop">
+					<input
+						v-model="geozoneDraftName"
+						class="map-input geozone-name-input"
+						type="text"
+						placeholder="Название геозоны"
+						maxlength="64"
+					/>
+					<span class="geozone-edit-hint">{{ geozoneEditHintText }}</span>
+					<button
+						v-if="geozoneAdding"
+						class="btn btn-secondary btn-compact"
+						type="button"
+						:disabled="!geozoneDraftPoints.length"
+						@click="undoGeozonePoint"
+					>↩</button>
+					<button class="btn btn-primary btn-compact" type="button" :disabled="!canSaveGeozone" @click="saveGeozone">
+						{{ geozoneEditingId ? 'Сохранить' : 'Создать' }}
+					</button>
+					<button class="btn btn-ghost btn-compact" type="button" @click="cancelGeozoneDraw">Отмена</button>
+				</div>
+
 				<div v-if="track" class="map-bar-meta">
 					<span class="map-bar-meta-name">{{ track.deviceName }} · {{ track.deviceId }}</span>
 				</div>
@@ -77,6 +126,70 @@
 							{{ loading ? 'Обновление…' : 'Обновить' }}
 						</button>
 
+						<div class="map-toolbar-section">
+							<div class="map-toolbar-section-title">Геозоны</div>
+							<button
+								class="btn"
+								:class="geozonesVisible ? 'btn-primary' : 'btn-secondary'"
+								type="button"
+								@click="toggleGeozonesVisible"
+							>
+								{{ geozonesVisible ? '⬡ Геозоны включены' : '⬡ Показать геозоны' }}
+							</button>
+							<button
+								v-if="geozonesVisible && !geozoneDrawingMode"
+								class="btn btn-secondary"
+								type="button"
+								@click="startAddGeozone"
+							>+ Добавить геозону</button>
+							<div
+								v-if="geozonesVisible && selectedGeozone && !geozoneDrawingMode"
+								class="geozone-mobile-selected"
+							>
+								<div class="geozone-selected-name">{{ selectedGeozone.name }}</div>
+								<button class="btn btn-ghost geozone-delete-btn" type="button" @click="removeGeozone(selectedGeozone.id)">
+									🗑 Удалить
+								</button>
+							</div>
+							<template v-if="geozoneDrawingMode">
+								<div class="map-toolbar-field">
+									<label for="geozone-name-mobile">Название</label>
+									<input
+										id="geozone-name-mobile"
+										v-model="geozoneDraftName"
+										class="map-input"
+										type="text"
+										placeholder="Название геозоны"
+										maxlength="64"
+									/>
+								</div>
+								<p class="geozone-edit-hint">{{ geozoneEditHintText }}</p>
+								<div class="geozone-toolbar-actions">
+									<button
+										v-if="geozoneAdding"
+										class="btn btn-secondary"
+										type="button"
+										:disabled="!geozoneDraftPoints.length"
+										@click="undoGeozonePoint"
+									>↩ Отменить точку</button>
+									<button class="btn btn-primary" type="button" :disabled="!canSaveGeozone" @click="saveGeozone">
+										{{ geozoneEditingId ? 'Сохранить изменения' : 'Сохранить' }}
+									</button>
+									<button class="btn btn-ghost" type="button" @click="cancelGeozoneDraw">Отмена</button>
+								</div>
+							</template>
+							<ul v-if="geozonesVisible && geofences.length" class="geozone-list">
+								<li v-for="zone in geofences" :key="zone.id" class="geozone-list-item">
+									<button
+										class="geozone-list-name"
+										:class="{ 'geozone-list-name--active': selectedGeozone?.id === zone.id }"
+										type="button"
+										@click="selectGeozone(zone)"
+									>{{ zone.name }}</button>
+								</li>
+							</ul>
+						</div>
+
 						<div v-if="hasTrack" class="map-toolbar-section">
 							<div class="map-toolbar-section-title">Проигрывание</div>
 
@@ -116,6 +229,9 @@
 				<div v-if="hasTrack && playbackInfo" class="playback-info">
 					<div class="playback-info-time">{{ playbackInfo.time }}</div>
 					<div v-if="playbackInfo.speed" class="playback-info-speed">{{ playbackInfo.speed }}</div>
+					<div v-if="playbackInfo.geofences && playbackInfo.geofences !== '—'" class="playback-info-geofences">
+						⬡ {{ playbackInfo.geofences }}
+					</div>
 				</div>
 			</div>
 
@@ -180,10 +296,14 @@
 <script>
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { getTrack } from '@/api/client'
+import { getTrack, getGeofences, createGeofence, updateGeofence, deleteGeofence } from '@/api/client'
 
 const PLAYBACK_SPEED_MIN = 60
 const PLAYBACK_SPEED_MAX = 10800
+const MIN_GEOZONE_POINTS = 4
+const MAX_GEOZONE_POINTS = 8
+
+const GEOZONE_COLORS = ['#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16']
 
 const CHART_SPEED_CAP = 180
 const CHART_SPEED_FLOOR = 60
@@ -225,6 +345,93 @@ const vehicleIcon = L.divIcon({
 	iconAnchor: [11, 11],
 })
 
+const GEOZONE_EDGE_HIT_PX = 14
+const GEOZONE_POINT_RADIUS = 7
+const GEOZONE_POINT_HIT_RADIUS = 14
+const GEOZONE_LABEL_GAP = 6
+
+function createGeozoneDraftPointsCanvasLayer(vm) {
+	return L.Layer.extend({
+		onAdd(map) {
+			this._map = map
+			this._vm = vm
+			this._canvas = L.DomUtil.create('canvas', 'geozone-draft-points-canvas')
+			this._canvas.style.pointerEvents = 'none'
+			map.getPanes().markerPane.appendChild(this._canvas)
+			this._canvas.style.zIndex = '700'
+			this._draw = this._draw.bind(this)
+			map.on('move zoom moveend zoomend viewreset resize', this._draw, this)
+			this._draw()
+		},
+		onRemove(map) {
+			map.off('move zoom moveend zoomend viewreset resize', this._draw, this)
+			L.DomUtil.remove(this._canvas)
+			this._canvas = null
+		},
+		redraw() {
+			this._draw()
+		},
+		_draw() {
+			if (!this._map || !this._canvas)
+				return
+
+			const vm = this._vm
+			const map = this._map
+			const points = vm.geozoneDraftPoints
+			const size = map.getSize()
+			const topLeft = map.containerPointToLayerPoint(L.point(0, 0))
+
+			L.DomUtil.setPosition(this._canvas, topLeft)
+
+			const dpr = window.devicePixelRatio || 1
+			this._canvas.width = Math.max(1, Math.round(size.x * dpr))
+			this._canvas.height = Math.max(1, Math.round(size.y * dpr))
+			this._canvas.style.width = `${size.x}px`
+			this._canvas.style.height = `${size.y}px`
+
+			const ctx = this._canvas.getContext('2d')
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+			ctx.clearRect(0, 0, size.x, size.y)
+
+			if (!points.length)
+				return
+
+			const color = vm.geozoneEditingId != null ? '#f59e0b' : '#3b82f6'
+
+			points.forEach((point, index) => {
+				const layerPt = map.latLngToLayerPoint([point.lat, point.lon])
+				const x = layerPt.x - topLeft.x
+				const y = layerPt.y - topLeft.y
+				const label = String(index + 1)
+
+				ctx.font = '600 10px Segoe UI, system-ui, sans-serif'
+				const textW = ctx.measureText(label).width
+				const padX = 4
+				const labelW = textW + padX * 2
+				const labelH = 14
+				const labelX = x - labelW / 2
+				const labelY = y - GEOZONE_POINT_RADIUS - GEOZONE_LABEL_GAP - labelH
+
+				ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
+				ctx.fillRect(labelX, labelY, labelW, labelH)
+
+				ctx.fillStyle = '#f8fafc'
+				ctx.textAlign = 'center'
+				ctx.textBaseline = 'middle'
+				ctx.fillText(label, x, labelY + labelH / 2)
+
+				ctx.beginPath()
+				ctx.arc(x, y, GEOZONE_POINT_RADIUS, 0, Math.PI * 2)
+				ctx.fillStyle = color
+				ctx.fill()
+				ctx.lineWidth = 2
+				ctx.strokeStyle = '#ffffff'
+				ctx.stroke()
+			})
+		},
+	})
+}
+
 export default {
 	name: 'MapView',
 	data() {
@@ -256,6 +463,25 @@ export default {
 			chartDrawTimer: null,
 			timeAxisTicks: [],
 			desktopMenuGuard: null,
+			geofences: [],
+			geozonesVisible: false,
+			geozoneLayer: null,
+			geozoneDraftLayer: null,
+			geozoneDraftPointsLayer: null,
+			geozoneAdding: false,
+			geozoneDraftPoints: [],
+			geozoneDraftName: '',
+			geozoneDraftPolygon: null,
+			geozoneDraftMarkers: [],
+			geozoneDraftPointsCanvas: null,
+			geozoneEditingId: null,
+			geozoneEdgeInsertAt: null,
+			geozoneEdgeInsertLatLng: null,
+			geozoneLastClickId: null,
+			geozoneLastClickTime: 0,
+			selectedGeozone: null,
+			minGeozonePoints: MIN_GEOZONE_POINTS,
+			maxGeozonePoints: MAX_GEOZONE_POINTS,
 		}
 	},
 	computed: {
@@ -296,6 +522,20 @@ export default {
 				labels.push(0)
 			return labels
 		},
+		canSaveGeozone() {
+			return this.geozoneDraftName.trim().length > 0 &&
+				this.geozoneDraftPoints.length >= MIN_GEOZONE_POINTS &&
+				this.geozoneDraftPoints.length <= MAX_GEOZONE_POINTS
+		},
+		geozoneDrawingMode() {
+			return this.geozoneAdding || this.geozoneEditingId != null
+		},
+		geozoneEditHintText() {
+			if (this.geozoneEditingId)
+				return `Перетащите точки (${this.geozoneDraftPoints.length}) · линия — новая · двойной клик — удалить`
+
+			return `Кликайте по карте: ${this.geozoneDraftPoints.length} / ${this.maxGeozonePoints} (мин. ${this.minGeozonePoints})`
+		},
 	},
 	watch: {
 		hasTrack(ready) {
@@ -316,6 +556,7 @@ export default {
 		this.initDefaultDates()
 		this.$nextTick(() => {
 			this.initMap()
+			this.loadGeofences()
 			this.loadTrack()
 			this.updateViewportMetrics()
 		})
@@ -338,6 +579,14 @@ export default {
 			this.chartDrawTimer = null
 		}
 		this.unbindChartDrag()
+		this.clearGeozoneClickTimer()
+		this.endGeozonePointDrag()
+		this.removeGeozoneDraftPointsCanvas()
+		this.clearGeozoneEdgeHover()
+		if (this.map) {
+			this.map.off('dblclick', this.onMapGeozoneDblClick)
+			this.map.doubleClickZoom.enable()
+		}
 		this.stopPlaybackLoop()
 		if (this.map) {
 			this.map.remove()
@@ -502,10 +751,15 @@ export default {
 
 			this.playbackTrackTime = Math.max(0, Math.min(this.totalDuration, trackTimeMs))
 			const state = this.getStateAtTrackTime(this.playbackTrackTime)
+			const points = this.track.points
+			const pointIndex = state.segmentT >= 0.5
+				? Math.min(points.length - 1, state.segmentIndex + 1)
+				: state.segmentIndex
 
 			this.playbackInfo = {
 				time: state.time,
 				speed: state.speed,
+				geofences: this.formatPointGeofences(points[pointIndex]),
 			}
 
 			if (!this.scrubbing)
@@ -873,7 +1127,623 @@ export default {
 
 			this.staticLayer = L.layerGroup().addTo(this.map)
 			this.playbackLayer = L.layerGroup().addTo(this.map)
+			this.geozoneLayer = L.layerGroup().addTo(this.map)
+			this.geozoneDraftLayer = L.layerGroup().addTo(this.map)
+			this.geozoneDraftPointsLayer = L.layerGroup().addTo(this.map)
+			this.map.on('click', this.onMapClick)
+			this.updateGeozoneMapInteraction()
 			this.$nextTick(() => this.handleMapResize())
+		},
+		updateGeozoneMapInteraction() {
+			if (!this.map) return
+
+			const blockDblClickZoom = this.geozonesVisible || this.geozoneDrawingMode
+
+			if (blockDblClickZoom) {
+				this.map.doubleClickZoom.disable()
+				this.map.off('dblclick', this.onMapGeozoneDblClick)
+				this.map.on('dblclick', this.onMapGeozoneDblClick)
+			} else {
+				this.map.off('dblclick', this.onMapGeozoneDblClick)
+				this.map.doubleClickZoom.enable()
+			}
+		},
+		isPointInGeozone(latlng, points) {
+			const x = latlng.lng
+			const y = latlng.lat
+			let inside = false
+
+			for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+				const xi = points[i].lon
+				const yi = points[i].lat
+				const xj = points[j].lon
+				const yj = points[j].lat
+				const intersects = (yi > y) !== (yj > y) &&
+					x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+
+				if (intersects)
+					inside = !inside
+			}
+
+			return inside
+		},
+		findGeozoneAt(latlng) {
+			if (!this.geozonesVisible || this.geozoneDrawingMode)
+				return null
+
+			for (let i = this.geofences.length - 1; i >= 0; i--) {
+				const zone = this.geofences[i]
+				if (String(this.geozoneEditingId) === String(zone.id))
+					continue
+				if (!zone.points?.length)
+					continue
+				if (this.isPointInGeozone(latlng, zone.points))
+					return zone
+			}
+
+			return null
+		},
+		onMapGeozoneDblClick(e) {
+			if (!this.geozonesVisible || this.geozoneDrawingMode)
+				return
+
+			const zone = this.findGeozoneAt(e.latlng)
+			if (!zone)
+				return
+
+			L.DomEvent.stop(e)
+			this.clearGeozoneClickTimer()
+			this.geozoneLastClickId = null
+			this.geozoneLastClickTime = 0
+			this.startEditGeozone(zone)
+		},
+		onMapClick(e) {
+			if (this.geozoneAdding) {
+				if (this.geozoneDraftPoints.length >= MAX_GEOZONE_POINTS)
+					return
+
+				this.geozoneDraftPoints.push({ lat: e.latlng.lat, lon: e.latlng.lng })
+				this.updateGeozoneDraftLayer()
+				return
+			}
+
+			if (this.geozonesVisible && !this.geozoneDrawingMode)
+				this.selectedGeozone = null
+		},
+		async loadGeofences() {
+			try {
+				this.geofences = await getGeofences()
+				this.renderGeofences()
+			} catch (e) {
+				if (e.message && e.message.includes('Сессия'))
+					this.$router.push({ name: 'login' })
+			}
+		},
+		renderGeofences() {
+			if (!this.geozoneLayer)
+				return
+
+			this.geozoneLayer.clearLayers()
+
+			if (!this.geozonesVisible)
+				return
+
+			this.geofences.forEach((zone, index) => {
+				if (!zone.points?.length)
+					return
+
+				if (String(this.geozoneEditingId) === String(zone.id))
+					return
+
+				const color = GEOZONE_COLORS[index % GEOZONE_COLORS.length]
+				const latLngs = zone.points.map((p) => [p.lat, p.lon])
+				const isSelected = String(this.selectedGeozone?.id) === String(zone.id)
+
+				const polygon = L.polygon(latLngs, {
+					color,
+					weight: 2,
+					fillColor: color,
+					fillOpacity: isSelected ? 0.38 : 0.18,
+				})
+
+				polygon.on('click', (e) => {
+					this.onGeozonePolygonClick(zone, e)
+				})
+
+				polygon.bindTooltip(zone.name, { sticky: true })
+				polygon.addTo(this.geozoneLayer)
+			})
+		},
+		clearGeozoneClickTimer() {
+			if (this.geozoneClickTimer) {
+				clearTimeout(this.geozoneClickTimer)
+				this.geozoneClickTimer = null
+			}
+		},
+		onGeozonePolygonClick(zone, e) {
+			L.DomEvent.stopPropagation(e)
+			if (!this.geozonesVisible || this.geozoneDrawingMode)
+				return
+
+			const zoneKey = String(zone.id)
+			const now = Date.now()
+			const isDoubleClick = this.geozoneLastClickId === zoneKey && (now - this.geozoneLastClickTime) < 500
+
+			this.clearGeozoneClickTimer()
+
+			if (isDoubleClick) {
+				this.geozoneLastClickId = null
+				this.geozoneLastClickTime = 0
+				this.startEditGeozone(zone)
+				return
+			}
+
+			this.geozoneLastClickId = zoneKey
+			this.geozoneLastClickTime = now
+
+			this.geozoneClickTimer = setTimeout(() => {
+				this.geozoneClickTimer = null
+				this.geozoneLastClickId = null
+				this.selectGeozone(zone)
+			}, 350)
+		},
+		selectGeozone(zone) {
+			if (!this.geozonesVisible || this.geozoneDrawingMode)
+				return
+
+			this.selectedGeozone = zone
+			this.renderGeofences()
+		},
+		startEditGeozone(zone) {
+			if (!zone?.points?.length)
+				return
+
+			if (String(this.geozoneEditingId) === String(zone.id))
+				return
+
+			this.clearGeozoneClickTimer()
+			this.geozoneLastClickId = null
+			this.stopPlaybackLoop()
+			this.geozoneAdding = false
+			this.selectedGeozone = null
+			this.geozoneEditingId = zone.id
+			this.geozoneDraftName = zone.name
+			this.geozoneDraftPoints = zone.points.map((p) => ({ lat: p.lat, lon: p.lon }))
+			this.renderGeofences()
+			this.updateGeozoneDraftLayer({ draggable: true })
+			this.updateGeozoneMapInteraction()
+			this.closeMenu()
+		},
+		cancelGeozoneDraw() {
+			const editedId = this.geozoneEditingId
+			this.resetGeozoneDraft()
+			this.geozoneAdding = false
+			this.geozoneEditingId = null
+
+			if (editedId)
+				this.selectedGeozone = this.geofences.find((z) => z.id === editedId) || null
+
+			this.renderGeofences()
+			this.updateGeozoneMapInteraction()
+		},
+		toggleGeozonesVisible() {
+			this.geozonesVisible = !this.geozonesVisible
+
+			if (!this.geozonesVisible) {
+				this.clearGeozoneClickTimer()
+				this.geozoneLastClickId = null
+				this.resetGeozoneDraft()
+				this.geozoneAdding = false
+				this.geozoneEditingId = null
+				this.selectedGeozone = null
+				this.geozoneDraftLayer?.clearLayers()
+				this.geozoneDraftPointsLayer?.clearLayers()
+				this.removeGeozoneDraftPointsCanvas()
+			}
+
+			this.renderGeofences()
+			this.updateGeozoneMapInteraction()
+		},
+		startAddGeozone() {
+			if (!this.geozonesVisible)
+				return
+
+			this.selectedGeozone = null
+			this.stopPlaybackLoop()
+			this.resetGeozoneDraft()
+			this.geozoneEditingId = null
+			this.geozoneAdding = true
+			this.renderGeofences()
+			this.updateGeozoneMapInteraction()
+		},
+		resetGeozoneDraft() {
+			this.endGeozonePointDrag()
+			this.clearGeozoneEdgeHover()
+			this.geozoneDraftPoints = []
+			this.geozoneDraftName = ''
+			this.geozoneDraftPolygon = null
+			this.geozoneDraftMarkers = []
+			this.geozoneDraftLayer?.clearLayers()
+			this.geozoneDraftPointsLayer?.clearLayers()
+			this.removeGeozoneDraftPointsCanvas()
+		},
+		removeGeozoneDraftPointsCanvas() {
+			if (this.geozoneDraftPointsCanvas && this.map)
+				this.map.removeLayer(this.geozoneDraftPointsCanvas)
+
+			this.geozoneDraftPointsCanvas = null
+		},
+		ensureGeozoneDraftPointsCanvas() {
+			if (!this.map || this.geozoneDraftPointsCanvas)
+				return
+
+			const LayerClass = createGeozoneDraftPointsCanvasLayer(this)
+			this.geozoneDraftPointsCanvas = new LayerClass()
+			this.geozoneDraftPointsCanvas.addTo(this.map)
+		},
+		redrawGeozoneDraftPoints() {
+			this.geozoneDraftPointsCanvas?.redraw()
+		},
+		endGeozonePointDrag() {
+			if (!this.map) return
+
+			this.map.dragging.enable()
+			this.map.off('mousemove', this.onGeozonePointDragMove)
+			this.map.off('mouseup', this.onGeozonePointDragEnd)
+			this.map.off('touchmove', this.onGeozonePointDragMove)
+			this.map.off('touchend', this.onGeozonePointDragEnd)
+			this._geozoneDragPointIndex = null
+			this._geozoneDragHitArea = null
+		},
+		createGeozoneDraftPointHitArea(point, index) {
+			const hitArea = L.circleMarker([point.lat, point.lon], {
+				radius: GEOZONE_POINT_HIT_RADIUS,
+				fillColor: '#000000',
+				fillOpacity: 0,
+				stroke: false,
+				interactive: true,
+				pane: 'markerPane',
+			})
+
+			this.bindGeozonePointDrag(hitArea, index)
+			return hitArea
+		},
+		deleteGeozoneDraftPoint(index) {
+			if (this.geozoneEditingId == null)
+				return
+
+			if (this.geozoneDraftPoints.length <= MIN_GEOZONE_POINTS) {
+				this.error = `Нельзя удалить: минимум ${MIN_GEOZONE_POINTS} точки`
+				return
+			}
+
+			this._geozonePointClickIndex = null
+			this.endGeozonePointDrag()
+			this.geozoneDraftPoints.splice(index, 1)
+			this.updateGeozoneDraftLayer({ draggable: true })
+		},
+		bindGeozonePointDrag(hitArea, index) {
+			hitArea.on('click', (e) => {
+				L.DomEvent.stopPropagation(e)
+				if (this.geozoneEditingId == null)
+					return
+
+				if (this._geozonePointDidDrag) {
+					this._geozonePointDidDrag = false
+					return
+				}
+
+				const now = Date.now()
+				const isDoubleClick = this._geozonePointClickIndex === index &&
+					(now - this._geozonePointClickTime) < 450
+
+				if (isDoubleClick) {
+					this._geozonePointClickIndex = null
+					this.deleteGeozoneDraftPoint(index)
+					return
+				}
+
+				this._geozonePointClickIndex = index
+				this._geozonePointClickTime = now
+			})
+
+			const startDrag = (e) => {
+				L.DomEvent.stopPropagation(e)
+				if (e.originalEvent?.button != null && e.originalEvent.button !== 0)
+					return
+
+				const startX = e.originalEvent.clientX
+				const startY = e.originalEvent.clientY
+				let dragging = false
+
+				const onMove = (moveEvent) => {
+					if (dragging)
+						return
+
+					const moveX = moveEvent.clientX ?? moveEvent.touches?.[0]?.clientX
+					const moveY = moveEvent.clientY ?? moveEvent.touches?.[0]?.clientY
+					if (moveX == null || moveY == null)
+						return
+
+					if (Math.hypot(moveX - startX, moveY - startY) < 5)
+						return
+
+					dragging = true
+					this._geozonePointDidDrag = true
+					cleanup()
+					this.beginGeozonePointDrag(index, hitArea)
+				}
+
+				const onUp = () => cleanup()
+
+				const cleanup = () => {
+					window.removeEventListener('mousemove', onMove)
+					window.removeEventListener('mouseup', onUp)
+					window.removeEventListener('touchmove', onMove)
+					window.removeEventListener('touchend', onUp)
+				}
+
+				window.addEventListener('mousemove', onMove)
+				window.addEventListener('mouseup', onUp)
+				window.addEventListener('touchmove', onMove, { passive: false })
+				window.addEventListener('touchend', onUp)
+			}
+
+			hitArea.on('mousedown', startDrag)
+			hitArea.on('touchstart', startDrag)
+		},
+		beginGeozonePointDrag(index, hitArea) {
+			this.endGeozonePointDrag()
+			this.map.dragging.disable()
+			this._geozoneDragPointIndex = index
+			this._geozoneDragHitArea = hitArea
+			this.map.getContainer().classList.add('map-geozone-point-drag')
+
+			this.map.on('mousemove', this.onGeozonePointDragMove)
+			this.map.on('mouseup', this.onGeozonePointDragEnd)
+			this.map.on('touchmove', this.onGeozonePointDragMove)
+			this.map.on('touchend', this.onGeozonePointDragEnd)
+		},
+		onGeozonePointDragMove(e) {
+			if (this._geozoneDragHitArea == null)
+				return
+
+			if (e.originalEvent?.touches?.length)
+				L.DomEvent.preventDefault(e.originalEvent)
+
+			const latlng = e.latlng
+			if (!latlng)
+				return
+
+			this._geozoneDragHitArea.setLatLng(latlng)
+			const index = this._geozoneDragPointIndex
+			this.geozoneDraftPoints[index] = { lat: latlng.lat, lon: latlng.lng }
+			this.updateGeozoneDraftPolygon(this.geozoneEditingId != null, { skipRecreate: true })
+			this.redrawGeozoneDraftPoints()
+		},
+		onGeozonePointDragEnd() {
+			this.map?.getContainer()?.classList.remove('map-geozone-point-drag')
+			this.endGeozonePointDrag()
+		},
+		clearGeozoneEdgeHover() {
+			this.geozoneEdgeInsertAt = null
+			this.geozoneEdgeInsertLatLng = null
+			this.map?.getContainer()?.classList.remove('map-geozone-edge-add')
+		},
+		closestPointOnSegment(p, a, b) {
+			const dx = b.x - a.x
+			const dy = b.y - a.y
+			if (dx === 0 && dy === 0)
+				return { dist: p.distanceTo(a), point: a }
+
+			let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)
+			t = Math.max(0, Math.min(1, t))
+			const proj = L.point(a.x + t * dx, a.y + t * dy)
+			return { dist: p.distanceTo(proj), point: proj }
+		},
+		findNearestGeozoneEdge(latlng) {
+			if (!this.map || this.geozoneDraftPoints.length < 2)
+				return null
+
+			const clickPt = this.map.latLngToLayerPoint(latlng)
+			let bestDist = Infinity
+			let bestIndex = null
+			let bestLatLng = null
+			const count = this.geozoneDraftPoints.length
+
+			for (let i = 0; i < count; i++) {
+				const j = (i + 1) % count
+				const a = this.map.latLngToLayerPoint([
+					this.geozoneDraftPoints[i].lat,
+					this.geozoneDraftPoints[i].lon,
+				])
+				const b = this.map.latLngToLayerPoint([
+					this.geozoneDraftPoints[j].lat,
+					this.geozoneDraftPoints[j].lon,
+				])
+				const hit = this.closestPointOnSegment(clickPt, a, b)
+				if (hit.dist < bestDist) {
+					bestDist = hit.dist
+					bestIndex = i
+					bestLatLng = this.map.layerPointToLatLng(hit.point)
+				}
+			}
+
+			if (bestDist > GEOZONE_EDGE_HIT_PX)
+				return null
+
+			return { index: bestIndex, latlng: bestLatLng }
+		},
+		onGeozonePolygonMouseMove(e) {
+			if (this.geozoneEditingId == null)
+				return
+
+			if (this.geozoneDraftPoints.length >= MAX_GEOZONE_POINTS) {
+				this.clearGeozoneEdgeHover()
+				return
+			}
+
+			const hit = this.findNearestGeozoneEdge(e.latlng)
+			if (!hit) {
+				this.clearGeozoneEdgeHover()
+				return
+			}
+
+			this.geozoneEdgeInsertAt = hit.index
+			this.geozoneEdgeInsertLatLng = hit.latlng
+			this.map.getContainer().classList.add('map-geozone-edge-add')
+		},
+		onGeozonePolygonMouseOut() {
+			this.clearGeozoneEdgeHover()
+		},
+		onGeozonePolygonClick(e) {
+			if (this.geozoneEditingId == null)
+				return
+
+			if (this.geozoneEdgeInsertAt == null || !this.geozoneEdgeInsertLatLng)
+				return
+
+			if (this.geozoneDraftPoints.length >= MAX_GEOZONE_POINTS)
+				return
+
+			L.DomEvent.stopPropagation(e)
+			const insertAt = this.geozoneEdgeInsertAt + 1
+			this.geozoneDraftPoints.splice(insertAt, 0, {
+				lat: this.geozoneEdgeInsertLatLng.lat,
+				lon: this.geozoneEdgeInsertLatLng.lng,
+			})
+			this.clearGeozoneEdgeHover()
+			this.updateGeozoneDraftLayer({ draggable: true })
+		},
+		bindGeozonePolygonEditEvents(polygon) {
+			polygon.on('mousemove', this.onGeozonePolygonMouseMove)
+			polygon.on('mouseout', this.onGeozonePolygonMouseOut)
+			polygon.on('click', this.onGeozonePolygonClick)
+		},
+		updateGeozoneDraftPolygon(isEditing, options = {}) {
+			if (this.geozoneDraftPoints.length < 2)
+				return
+
+			const latLngs = this.geozoneDraftPoints.map((p) => [p.lat, p.lon])
+
+			if (this.geozoneDraftPolygon && options.skipRecreate) {
+				this.geozoneDraftPolygon.setLatLngs(latLngs)
+				return
+			}
+
+			if (this.geozoneDraftPolygon) {
+				this.geozoneDraftPolygon.off('mousemove', this.onGeozonePolygonMouseMove)
+				this.geozoneDraftPolygon.off('mouseout', this.onGeozonePolygonMouseOut)
+				this.geozoneDraftPolygon.off('click', this.onGeozonePolygonClick)
+				this.geozoneDraftLayer.removeLayer(this.geozoneDraftPolygon)
+				this.geozoneDraftPolygon = null
+			}
+
+			this.geozoneDraftPolygon = L.polygon(latLngs, {
+				color: isEditing ? '#f59e0b' : '#3b82f6',
+				weight: isEditing ? 4 : 2,
+				dashArray: isEditing ? null : '6 4',
+				fillColor: isEditing ? '#f59e0b' : '#3b82f6',
+				fillOpacity: isEditing ? 0.2 : 0.12,
+			}).addTo(this.geozoneDraftLayer)
+
+			if (isEditing)
+				this.bindGeozonePolygonEditEvents(this.geozoneDraftPolygon)
+		},
+		updateGeozoneDraftLayer(options = {}) {
+			if (!this.geozoneDraftLayer)
+				return
+
+			const draggable = options.draggable === true || this.geozoneEditingId != null
+
+			this.endGeozonePointDrag()
+			this.clearGeozoneEdgeHover()
+			this.geozoneDraftLayer.clearLayers()
+			this.geozoneDraftPointsLayer?.clearLayers()
+			this.geozoneDraftMarkers = []
+			this.geozoneDraftPolygon = null
+
+			this.updateGeozoneDraftPolygon(draggable)
+
+			if (this.geozoneDraftPoints.length) {
+				this.ensureGeozoneDraftPointsCanvas()
+				this.redrawGeozoneDraftPoints()
+			} else {
+				this.removeGeozoneDraftPointsCanvas()
+			}
+
+			if (draggable) {
+				this.geozoneDraftPoints.forEach((point, index) => {
+					const hitArea = this.createGeozoneDraftPointHitArea(point, index)
+					hitArea.addTo(this.geozoneDraftPointsLayer)
+					hitArea.bringToFront()
+					this.geozoneDraftMarkers.push(hitArea)
+				})
+			}
+		},
+		undoGeozonePoint() {
+			if (!this.geozoneDraftPoints.length)
+				return
+
+			this.geozoneDraftPoints.pop()
+			this.updateGeozoneDraftLayer()
+		},
+		async saveGeozone() {
+			if (!this.canSaveGeozone)
+				return
+
+			const payload = {
+				name: this.geozoneDraftName.trim(),
+				points: this.geozoneDraftPoints.map((p) => ({ lat: p.lat, lon: p.lon })),
+			}
+			const savedId = this.geozoneEditingId
+
+			try {
+				if (this.geozoneEditingId)
+					await updateGeofence(this.geozoneEditingId, payload)
+				else
+					await createGeofence(payload)
+
+				this.geozoneEditingId = null
+				this.geozoneAdding = false
+				this.resetGeozoneDraft()
+				await this.loadGeofences()
+
+				if (savedId)
+					this.selectedGeozone = this.geofences.find((z) => String(z.id) === String(savedId)) || null
+				else
+					this.selectedGeozone = null
+
+				this.renderGeofences()
+				this.closeMenu()
+				this.updateGeozoneMapInteraction()
+			} catch (e) {
+				this.error = e.message || 'Не удалось сохранить геозону'
+			}
+		},
+		async removeGeozone(id) {
+			if (!window.confirm('Удалить геозону?'))
+				return
+
+			try {
+				if (this.geozoneEditingId === id)
+					this.cancelGeozoneDraw()
+
+				if (this.selectedGeozone?.id === id)
+					this.selectedGeozone = null
+
+				await deleteGeofence(id)
+				await this.loadGeofences()
+			} catch (e) {
+				this.error = e.message || 'Не удалось удалить геозону'
+			}
+		},
+		formatPointGeofences(point) {
+			const names = point?.geofences
+			if (!names?.length)
+				return '—'
+
+			return names.join(', ')
 		},
 		goBack() {
 			this.closeMenu()
@@ -1036,7 +1906,8 @@ export default {
 		pointPopup(point, label) {
 			const title = label ? `<strong>${label}</strong><br>` : ''
 			const speed = this.getPointSpeed(point) ?? '—'
-			return `${title}${point.timeLocal}<br>Скорость: ${speed}<br>Высота: ${point.alt ?? '—'} м`
+			const geofences = this.formatPointGeofences(point)
+			return `${title}${point.timeLocal}<br>Скорость: ${speed}<br>Высота: ${point.alt ?? '—'} м<br>Геозоны: ${geofences}`
 		},
 	},
 }
@@ -1066,5 +1937,9 @@ export default {
 	justify-content: center;
 	transform-origin: center center;
 	filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+
+.map-leaflet :deep(.geozone-draft-points-canvas) {
+	pointer-events: none;
 }
 </style>

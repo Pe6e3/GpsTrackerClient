@@ -801,6 +801,125 @@ body {
 	line-height: 1.3;
 }
 
+.geozone-toolbar-panel {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.geozone-toolbar-panel--desktop {
+	padding: 4px 8px;
+	border-radius: 8px;
+	background: rgba(15, 23, 42, 0.55);
+	border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.geozone-name-input {
+	min-width: 140px;
+	max-width: 180px;
+}
+
+.geozone-selected-name {
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: #f8fafc;
+	white-space: nowrap;
+	max-width: 160px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.geozone-add-btn {
+	min-width: 32px;
+	font-size: 1.1rem;
+	line-height: 1;
+	padding-left: 8px;
+	padding-right: 8px;
+}
+
+.geozone-mobile-selected {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 8px;
+	padding: 8px;
+	border-radius: 8px;
+	background: rgba(15, 23, 42, 0.35);
+	border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.geozone-edit-hint {
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	margin: 0;
+}
+
+.geozone-toolbar-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.geozone-list {
+	list-style: none;
+	margin: 8px 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.geozone-list-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: rgba(15, 23, 42, 0.35);
+	border: 1px solid rgba(148, 163, 184, 0.15);
+	font-size: 0.85rem;
+}
+
+.geozone-list-name {
+	flex: 1;
+	text-align: left;
+	background: none;
+	border: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	padding: 0;
+}
+
+.geozone-list-name:hover {
+	color: var(--accent);
+}
+
+.geozone-list-name--active {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.geozone-delete-btn {
+	color: #fca5a5;
+}
+
+.leaflet-container.map-geozone-edge-add {
+	cursor: crosshair !important;
+}
+
+.leaflet-container.map-geozone-point-drag {
+	cursor: grabbing !important;
+}
+
+.playback-info-geofences {
+	margin-top: 2px;
+	font-size: 0.62rem;
+	color: #86efac;
+}
+
 @media (max-width: 768px) {
 	.map-toolbar-desktop {
 		display: none;
