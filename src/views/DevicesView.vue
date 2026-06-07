@@ -27,13 +27,42 @@
 							<div class="device-name">{{ device.name || 'Без имени' }}</div>
 							<div class="device-id">ID: {{ device.id }}</div>
 							<div class="device-stats">
-								<span>{{ formatCount(device.pointsCount) }} точек</span>
-								<span class="device-stats-sep">·</span>
-								<span>{{ formatKm(device.monthKm) }} за месяц</span>
-								<span class="device-stats-sep">·</span>
-								<span :class="telemetryClass(device.lastTelemetryAgoSeconds)">
-									{{ formatTelemetryAgo(device.lastTelemetryAgoSeconds) }}
-								</span>
+								<div
+									v-for="period in devicePeriods(device)"
+									:key="period.key"
+									class="device-period"
+								>
+									<div class="device-period-title">{{ period.label }}</div>
+									<div class="device-period-grid">
+										<div class="device-period-col">
+											<span class="device-period-kind">Трек</span>
+											<span class="device-period-value">
+												{{ formatKm(period.trackKm) }}
+												<span class="device-stats-sep">·</span>
+												{{ formatTrackPoints(period.trackPoints, period.heartbeatPoints) }}
+											</span>
+										</div>
+										<div class="device-period-col device-period-col-raw">
+											<span class="device-period-kind">Сырые</span>
+											<span class="device-period-value">
+												{{ formatKm(period.rawKm) }}
+												<span class="device-stats-sep">·</span>
+												{{ formatCount(period.rawPoints) }}
+											</span>
+										</div>
+									</div>
+								</div>
+								<div class="device-stats-line device-stats-status">
+									<span :class="telemetryClass(device.lastTelemetryAgoSeconds)">
+										Связь {{ formatTelemetryAgo(device.lastTelemetryAgoSeconds) }}
+									</span>
+									<span
+										v-if="device.lastGpsAgoSeconds != null"
+										class="device-stats-gps"
+									>
+										GPS {{ formatTelemetryAgo(device.lastGpsAgoSeconds) }}
+									</span>
+								</div>
 							</div>
 						</div>
 						<span class="device-arrow" aria-hidden="true">→</span>
@@ -72,35 +101,55 @@
 
 <script>
 import { getDevices, clearToken } from '@/api/client'
+import autoRefreshMixin from '@/mixins/autoRefresh'
 
 export default {
 	name: 'DevicesView',
+	mixins: [autoRefreshMixin],
 	data() {
 		return {
 			devices: [],
 			service: null,
 			loading: true,
 			error: '',
+			refreshInFlight: false,
 		}
 	},
 	mounted() {
 		this.loadDevices()
 	},
 	methods: {
-		async loadDevices() {
-			this.loading = true
-			this.error = ''
+		onAutoRefresh() {
+			if (this.loading || this.refreshInFlight)
+				return
+
+			this.loadDevices({ silent: true })
+		},
+		async loadDevices(options = {}) {
+			const silent = options.silent === true
+			if (!silent) {
+				this.loading = true
+				this.error = ''
+			}
+
+			this.refreshInFlight = true
 
 			try {
 				const data = await getDevices()
 				this.devices = data.devices || []
 				this.service = data.service || null
+				if (silent)
+					this.error = ''
 			} catch (e) {
-				this.error = e.message || 'Не удалось загрузить устройства'
-				if (e.message && e.message.includes('Сессия'))
-					this.$router.push({ name: 'login' })
+				if (!silent) {
+					this.error = e.message || 'Не удалось загрузить устройства'
+					if (e.message && e.message.includes('Сессия'))
+						this.$router.push({ name: 'login' })
+				}
 			} finally {
-				this.loading = false
+				this.refreshInFlight = false
+				if (!silent)
+					this.loading = false
 			}
 		},
 		openMap(device) {
@@ -117,6 +166,45 @@ export default {
 		formatKm(value) {
 			if (value == null) return '—'
 			return `${Number(value).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} км`
+		},
+		deviceValue(device, ...keys) {
+			for (const key of keys) {
+				if (device[key] != null)
+					return device[key]
+			}
+			return null
+		},
+		devicePeriods(device) {
+			return [
+				{
+					key: 'today',
+					label: 'Сегодня',
+					trackKm: this.deviceValue(device, 'todayKmOptimized', 'todayKmRaw'),
+					trackPoints: this.deviceValue(device, 'todayPointsOptimized'),
+					heartbeatPoints: device.todayHeartbeatPoints || 0,
+					rawKm: device.todayKmRaw,
+					rawPoints: device.todayPointsRaw,
+				},
+				{
+					key: 'month',
+					label: 'Месяц',
+					trackKm: this.deviceValue(device, 'monthKmOptimized', 'monthKmRaw', 'monthKm'),
+					trackPoints: this.deviceValue(device, 'monthPointsOptimized'),
+					heartbeatPoints: device.monthHeartbeatPoints || 0,
+					rawKm: this.deviceValue(device, 'monthKmRaw', 'monthKm'),
+					rawPoints: this.deviceValue(device, 'monthPointsRaw', 'pointsCount'),
+				},
+			]
+		},
+		formatTrackPoints(trackPoints, heartbeatPoints) {
+			if (trackPoints == null)
+				return '—'
+
+			const keyPoints = this.formatCount(trackPoints)
+			if (!heartbeatPoints)
+				return `${keyPoints} точек`
+
+			return `${keyPoints} + ${this.formatCount(heartbeatPoints)} почас.`
 		},
 		formatTelemetryAgo(seconds) {
 			if (seconds == null) return 'нет связи'

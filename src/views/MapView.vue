@@ -4,6 +4,21 @@
 			<div class="map-bar map-toolbar-desktop">
 				<button class="btn btn-ghost btn-compact" type="button" @click="goBack">←</button>
 
+				<select
+					id="period-preset"
+					v-model="periodPreset"
+					class="map-input map-period-preset"
+					aria-label="Период"
+					:disabled="loading"
+					@change="onPeriodPresetChange"
+				>
+					<option
+						v-for="preset in periodPresets"
+						:key="preset.id"
+						:value="preset.id"
+					>{{ preset.label }}</option>
+				</select>
+
 				<input
 					id="from"
 					v-model="from"
@@ -11,6 +26,7 @@
 					type="datetime-local"
 					aria-label="Начало периода"
 					:disabled="loading"
+					@change="onFromFilterChange"
 				/>
 
 				<input
@@ -20,6 +36,7 @@
 					type="datetime-local"
 					aria-label="Конец периода"
 					:disabled="loading"
+					@change="onToFilterChange"
 				/>
 
 				<button class="btn btn-primary btn-compact" type="button" :disabled="loading" @click="applyTrack">
@@ -101,6 +118,22 @@
 
 						<div class="map-toolbar-filters">
 							<div class="map-toolbar-field">
+								<label for="period-preset-mobile">Период</label>
+								<select
+									id="period-preset-mobile"
+									v-model="periodPreset"
+									class="map-input map-period-preset"
+									:disabled="loading"
+									@change="onPeriodPresetChange"
+								>
+									<option
+										v-for="preset in periodPresets"
+										:key="preset.id"
+										:value="preset.id"
+									>{{ preset.label }}</option>
+								</select>
+							</div>
+							<div class="map-toolbar-field">
 								<label for="from-mobile">Период с</label>
 								<input
 									id="from-mobile"
@@ -108,6 +141,7 @@
 									class="map-input map-input-date"
 									type="datetime-local"
 									:disabled="loading"
+									@change="onFromFilterChange"
 								/>
 							</div>
 							<div class="map-toolbar-field">
@@ -118,6 +152,7 @@
 									class="map-input map-input-date"
 									type="datetime-local"
 									:disabled="loading"
+									@change="onToFilterChange"
 								/>
 							</div>
 						</div>
@@ -297,6 +332,7 @@
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { getTrack, getGeofences, createGeofence, updateGeofence, deleteGeofence } from '@/api/client'
+import autoRefreshMixin from '@/mixins/autoRefresh'
 
 const PLAYBACK_SPEED_MIN = 60
 const PLAYBACK_SPEED_MAX = 10800
@@ -322,6 +358,16 @@ const TIME_AXIS_STEPS_MS = [
 	14 * 86400000,
 	30 * 86400000,
 	90 * 86400000,
+]
+
+const PERIOD_PRESETS = [
+	{ id: 'today', label: 'Текущий день' },
+	{ id: 'last3hours', label: 'Последние 3 часа' },
+	{ id: 'yesterday', label: 'Предыдущий день' },
+	{ id: 'last3days', label: 'Последние 3 дня' },
+	{ id: 'lastWeek', label: 'Последняя неделя' },
+	{ id: 'lastMonth', label: 'Последний месяц' },
+	{ id: 'custom', label: 'Свой период' },
 ]
 
 const startIcon = L.divIcon({
@@ -434,11 +480,16 @@ function createGeozoneDraftPointsCanvasLayer(vm) {
 
 export default {
 	name: 'MapView',
+	mixins: [autoRefreshMixin],
 	data() {
 		return {
 			menuOpen: false,
 			from: '',
 			to: '',
+			periodPreset: 'today',
+			fromManual: false,
+			toManual: false,
+			refreshInFlight: false,
 			track: null,
 			loading: false,
 			error: '',
@@ -489,7 +540,13 @@ export default {
 			return this.$route.params.deviceId
 		},
 		hasTrack() {
-			return (this.track?.points?.length || 0) > 0
+			return this.mapTrackPoints.length > 0
+		},
+		periodPresets() {
+			return PERIOD_PRESETS
+		},
+		mapTrackPoints() {
+			return (this.track?.points || []).filter((p) => p.lat != null && p.lon != null)
 		},
 		playbackSpeed() {
 			const logMin = Math.log(PLAYBACK_SPEED_MIN)
@@ -509,8 +566,8 @@ export default {
 			return `${this.scrubberValue / 10}%`
 		},
 		chartSpeedMax() {
-			if (!this.track?.points?.length) return CHART_SPEED_CAP
-			const speeds = this.track.points.map((p) => this.getPointSpeedValue(p))
+			if (!this.mapTrackPoints.length) return CHART_SPEED_CAP
+			const speeds = this.mapTrackPoints.map((p) => this.getPointSpeedValue(p))
 			const dataMax = speeds.length ? Math.max(0, ...speeds) : 0
 			return Math.min(CHART_SPEED_CAP, Math.max(CHART_SPEED_FLOOR, dataMax))
 		},
@@ -595,12 +652,163 @@ export default {
 	},
 	methods: {
 		initDefaultDates() {
-			const now = new Date()
-			const start = new Date(now)
-			start.setHours(0, 0, 0, 0)
+			this.applyPeriodPreset('today')
+		},
+		startOfDay(date) {
+			const d = new Date(date)
+			d.setHours(0, 0, 0, 0)
+			return d
+		},
+		endOfDay(date) {
+			const d = new Date(date)
+			d.setHours(23, 59, 0, 0)
+			return d
+		},
+		addDays(date, days) {
+			const d = new Date(date)
+			d.setDate(d.getDate() + days)
+			return d
+		},
+		addHours(date, hours) {
+			const d = new Date(date)
+			d.setTime(d.getTime() + hours * 3600000)
+			return d
+		},
+		applyPeriodPreset(preset) {
+			if (preset === 'custom')
+				return
 
-			this.from = this.toLocalInput(start)
-			this.to = this.toLocalInput(now)
+			const now = new Date()
+			let fromDate
+			let toDate
+			let fromManual = false
+			let toManual = false
+
+			if (preset === 'today') {
+				fromDate = this.startOfDay(now)
+				toDate = now
+			} else if (preset === 'last3hours') {
+				fromDate = this.addHours(now, -3)
+				toDate = now
+			} else if (preset === 'yesterday') {
+				const day = this.addDays(now, -1)
+				fromDate = this.startOfDay(day)
+				toDate = this.endOfDay(day)
+				fromManual = true
+				toManual = true
+			} else if (preset === 'last3days') {
+				fromDate = this.startOfDay(this.addDays(now, -2))
+				toDate = now
+			} else if (preset === 'lastWeek') {
+				fromDate = this.startOfDay(this.addDays(now, -6))
+				toDate = now
+			} else if (preset === 'lastMonth') {
+				fromDate = this.startOfDay(this.addDays(now, -29))
+				toDate = now
+			} else {
+				return
+			}
+
+			this.periodPreset = preset
+			this.fromManual = fromManual
+			this.toManual = toManual
+			this.from = this.toLocalInput(fromDate)
+			this.to = this.toLocalInput(toDate)
+		},
+		onPeriodPresetChange() {
+			if (this.periodPreset === 'custom')
+				return
+
+			this.applyPeriodPreset(this.periodPreset)
+			this.loadTrack()
+		},
+		onFromFilterChange() {
+			this.fromManual = true
+			this.periodPreset = 'custom'
+		},
+		onToFilterChange() {
+			this.toManual = true
+			this.periodPreset = 'custom'
+		},
+		refreshToDateIfAuto() {
+			if (this.toManual)
+				return
+
+			this.to = this.toLocalInput(new Date())
+
+			if (this.periodPreset === 'today')
+				return
+
+			const now = new Date()
+
+			if (this.periodPreset === 'last3hours')
+				this.from = this.toLocalInput(this.addHours(now, -3))
+			else if (this.periodPreset === 'last3days')
+				this.from = this.toLocalInput(this.startOfDay(this.addDays(now, -2)))
+			else if (this.periodPreset === 'lastWeek')
+				this.from = this.toLocalInput(this.startOfDay(this.addDays(now, -6)))
+			else if (this.periodPreset === 'lastMonth')
+				this.from = this.toLocalInput(this.startOfDay(this.addDays(now, -29)))
+		},
+		canAutoRefresh() {
+			if (this.loading || this.refreshInFlight || this.chartDragging)
+				return false
+			if (this.geozoneAdding || this.geozoneEditingId != null)
+				return false
+			if (this._geozoneDragPointIndex != null)
+				return false
+			return true
+		},
+		async onAutoRefresh() {
+			if (!this.canAutoRefresh())
+				return
+
+			await this.loadTrack({ silent: true })
+
+			if (!this.canAutoRefresh())
+				return
+
+			await this.loadGeofences({ silent: true })
+		},
+		capturePlaybackState() {
+			return {
+				playing: this.playing,
+				playbackTrackTime: this.playbackTrackTime,
+				scrubberValue: this.scrubberValue,
+			}
+		},
+		restorePlaybackState(state) {
+			if (!this.mapTrackPoints.length || !this.playbackLayer)
+				return
+
+			this.playbackLayer.clearLayers()
+
+			this.progressLine = L.polyline([], {
+				color: '#3b82f6',
+				weight: 5,
+				opacity: 0.95,
+			}).addTo(this.playbackLayer)
+
+			const firstPoint = this.mapTrackPoints[0]
+			this.vehicleMarker = L.marker([firstPoint.lat, firstPoint.lon], { icon: vehicleIcon, zIndexOffset: 1000 })
+				.addTo(this.playbackLayer)
+
+			const time = Math.min(state.playbackTrackTime, this.totalDuration)
+			this.applyPlaybackState(time)
+
+			if (state.playing && time < this.totalDuration) {
+				this.playing = true
+				this.lastFrameTime = 0
+				this.animFrameId = requestAnimationFrame((ts) => this.tick(ts))
+			} else {
+				this.playing = false
+			}
+
+			this.applyTrackVisibility()
+			this.$nextTick(() => {
+				this.bindChartResizeObserver()
+				this.scheduleDrawSpeedChart()
+			})
 		},
 		toLocalInput(date) {
 			const pad = (n) => String(n).padStart(2, '0')
@@ -648,7 +856,7 @@ export default {
 			return (from + diff * t + 360) % 360
 		},
 		buildTimeline() {
-			const points = this.track?.points || []
+			const points = this.mapTrackPoints
 			this.pointTimes = points.map((p) => this.parsePointTime(p))
 			if (points.length < 2) {
 				this.totalDuration = 0
@@ -657,7 +865,7 @@ export default {
 			this.totalDuration = Math.max(1, this.pointTimes[this.pointTimes.length - 1] - this.pointTimes[0])
 		},
 		getStateAtTrackTime(trackTimeMs) {
-			const points = this.track.points
+			const points = this.mapTrackPoints
 			const baseTime = this.pointTimes[0]
 			const absoluteTime = baseTime + trackTimeMs
 
@@ -726,7 +934,7 @@ export default {
 			}
 		},
 		getProgressLatLngs(state) {
-			const points = this.track.points
+			const points = this.mapTrackPoints
 			const latLngs = []
 			for (let i = 0; i <= state.segmentIndex; i++)
 				latLngs.push([points[i].lat, points[i].lon])
@@ -747,11 +955,11 @@ export default {
 				el.style.transform = `rotate(${direction}deg)`
 		},
 		applyPlaybackState(trackTimeMs) {
-			if (!this.track?.points?.length) return
+			if (!this.mapTrackPoints.length) return
 
 			this.playbackTrackTime = Math.max(0, Math.min(this.totalDuration, trackTimeMs))
 			const state = this.getStateAtTrackTime(this.playbackTrackTime)
-			const points = this.track.points
+			const points = this.mapTrackPoints
 			const pointIndex = state.segmentT >= 0.5
 				? Math.min(points.length - 1, state.segmentIndex + 1)
 				: state.segmentIndex
@@ -1027,7 +1235,7 @@ export default {
 				ctx.stroke()
 			}
 
-			const points = this.track.points
+			const points = this.mapTrackPoints
 			const speeds = points.map((p) => this.getPointSpeedValue(p))
 			const coords = points.map((p, i) => ({
 				x: ((this.pointTimes[i] - baseTime) / duration) * width,
@@ -1210,12 +1418,17 @@ export default {
 			if (this.geozonesVisible && !this.geozoneDrawingMode)
 				this.selectedGeozone = null
 		},
-		async loadGeofences() {
+		async loadGeofences(options = {}) {
+			const silent = options.silent === true
+
+			if (silent && (this.geozoneAdding || this.geozoneEditingId != null))
+				return
+
 			try {
 				this.geofences = await getGeofences()
 				this.renderGeofences()
 			} catch (e) {
-				if (e.message && e.message.includes('Сессия'))
+				if (!silent && e.message && e.message.includes('Сессия'))
 					this.$router.push({ name: 'login' })
 			}
 		},
@@ -1756,6 +1969,11 @@ export default {
 			this.menuOpen = false
 		},
 		async applyTrack() {
+			if (this.periodPreset !== 'custom' && this.periodPreset !== 'yesterday')
+				this.applyPeriodPreset(this.periodPreset)
+			else
+				this.refreshToDateIfAuto()
+
 			await this.loadTrack()
 			this.closeMenu()
 		},
@@ -1778,7 +1996,7 @@ export default {
 			this.scrubbing = false
 		},
 		initPlayback() {
-			if (!this.track?.points?.length) return
+			if (!this.mapTrackPoints.length) return
 
 			this.buildTimeline()
 			this.playbackTrackTime = 0
@@ -1793,7 +2011,8 @@ export default {
 				opacity: 0.95,
 			}).addTo(this.playbackLayer)
 
-			this.vehicleMarker = L.marker(this.track.points[0], { icon: vehicleIcon, zIndexOffset: 1000 })
+			const firstPoint = this.mapTrackPoints[0]
+			this.vehicleMarker = L.marker([firstPoint.lat, firstPoint.lon], { icon: vehicleIcon, zIndexOffset: 1000 })
 				.addTo(this.playbackLayer)
 
 			this.applyPlaybackState(0)
@@ -1841,12 +2060,23 @@ export default {
 			this.applyPlaybackState(nextTime)
 			this.animFrameId = requestAnimationFrame((ts) => this.tick(ts))
 		},
-		async loadTrack() {
-			this.loading = true
-			this.error = ''
-			this.track = null
-			this.resetPlaybackLayers()
-			this.staticLayer?.clearLayers()
+		async loadTrack(options = {}) {
+			const silent = options.silent === true
+
+			if (this.refreshInFlight)
+				return
+
+			if (!silent) {
+				this.loading = true
+				this.error = ''
+				this.track = null
+				this.resetPlaybackLayers()
+				this.staticLayer?.clearLayers()
+			} else {
+				this.refreshToDateIfAuto()
+			}
+
+			this.refreshInFlight = true
 
 			try {
 				const params = {}
@@ -1854,27 +2084,53 @@ export default {
 				if (this.to) params.to = this.toApiDateTime(this.to)
 
 				this.track = await getTrack(this.deviceId, params)
-				this.renderTrack()
+				this.renderTrack({ silent })
 			} catch (e) {
-				this.error = e.message || 'Не удалось загрузить трек'
-				if (e.message && e.message.includes('Сессия'))
-					this.$router.push({ name: 'login' })
+				if (!silent) {
+					this.error = e.message || 'Не удалось загрузить трек'
+					if (e.message && e.message.includes('Сессия'))
+						this.$router.push({ name: 'login' })
+				}
 			} finally {
-				this.loading = false
-				this.$nextTick(() => this.handleMapResize())
+				this.refreshInFlight = false
+				if (!silent) {
+					this.loading = false
+					this.$nextTick(() => this.handleMapResize())
+				}
 			}
 		},
-		renderTrack() {
+		renderTrack(options = {}) {
+			const silent = options.silent === true
+			const playbackState = silent ? this.capturePlaybackState() : null
+
 			if (!this.map || !this.staticLayer) return
 
-			this.staticLayer.clearLayers()
-			this.resetPlaybackLayers()
+			if (this.animFrameId) {
+				cancelAnimationFrame(this.animFrameId)
+				this.animFrameId = null
+			}
 
-			const points = this.track?.points || []
+			this.staticLayer.clearLayers()
+
+			if (silent) {
+				this.playbackLayer?.clearLayers()
+				this.progressLine = null
+				this.vehicleMarker = null
+				this.playing = false
+				this.lastFrameTime = 0
+			} else {
+				this.resetPlaybackLayers()
+			}
+
+			const points = this.mapTrackPoints
 			if (!points.length) {
-				this.error = 'Нет точек за выбранный период'
+				if (!silent)
+					this.error = 'Нет точек за выбранный период'
 				return
 			}
+
+			if (silent)
+				this.error = ''
 
 			this.buildTimeline()
 			const latLngs = points.map((p) => [p.lat, p.lon])
@@ -1898,8 +2154,14 @@ export default {
 				.addTo(this.staticLayer)
 
 			this.$nextTick(() => {
-				this.map.fitBounds(this.backgroundLine.getBounds(), { padding: [40, 40] })
-				this.initPlayback()
+				if (!silent)
+					this.map.fitBounds(this.backgroundLine.getBounds(), { padding: [40, 40] })
+
+				if (silent && playbackState)
+					this.restorePlaybackState(playbackState)
+				else
+					this.initPlayback()
+
 				this.$nextTick(() => this.handleMapResize())
 			})
 		},

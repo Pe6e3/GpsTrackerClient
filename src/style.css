@@ -254,12 +254,73 @@ body {
 
 .device-stats {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px 0;
+	flex-direction: column;
+	gap: 8px;
 	margin-top: 8px;
 	font-size: 0.82rem;
 	color: var(--text-muted);
+}
+
+.device-period {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.device-period-title {
+	font-size: 0.72rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--text-muted);
+	opacity: 0.85;
+}
+
+.device-period-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 4px 12px;
+}
+
+.device-period-col {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+}
+
+.device-period-kind {
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	opacity: 0.7;
+}
+
+.device-period-value {
+	color: var(--text);
+	font-weight: 500;
+	line-height: 1.35;
+}
+
+.device-period-col-raw .device-period-value {
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+.device-stats-line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 8px;
+}
+
+.device-stats-status {
+	margin-top: 2px;
+}
+
+.device-stats-gps {
+	color: var(--text-muted);
+	font-size: 0.75rem;
 }
 
 .device-stats-sep {
@@ -403,6 +464,15 @@ body {
 	max-width: 170px;
 }
 
+.map-bar .map-period-preset,
+.map-period-preset {
+	width: auto;
+	min-width: 9.5rem;
+	max-width: 11rem;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
 .map-bar-meta {
 	margin-left: auto;
 	display: flex;
@@ -543,6 +613,11 @@ body {
 .map-toolbar-field .map-input-date {
 	width: 100%;
 	min-width: 0;
+	max-width: none;
+}
+
+.map-toolbar-field .map-period-preset {
+	width: 100%;
 	max-width: none;
 }
 
