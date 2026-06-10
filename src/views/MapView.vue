@@ -283,8 +283,10 @@
 						<div class="playback-chart-plot-column">
 							<div
 								class="playback-chart-speed-area"
+								title="Ctrl + колёсико — масштаб, колёсико — прокрутка"
 								@mousedown.prevent="onChartPointerDown"
 								@touchstart.prevent="onChartTouchStart"
+								@wheel.prevent="onChartWheel"
 							>
 								<canvas ref="speedChartCanvas" class="playback-chart-canvas"></canvas>
 								<div class="playback-chart-cursor" :style="{ left: chartCursorLeft }"></div>
@@ -342,12 +344,21 @@ const MAX_GEOZONE_POINTS = 8
 const GEOZONE_COLORS = ['#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16']
 
 const CHART_SPEED_CAP = 180
-const CHART_SPEED_FLOOR = 60
 const CHART_SPEED_GRID = 20
 const CHART_HEIGHT = 88
 const CHART_TIME_AXIS_HEIGHT = 16
+const CHART_STEP_CORNER_RADIUS = 5
+const CHART_ZOOM_IN_FACTOR = 0.82
+const CHART_ZOOM_OUT_FACTOR = 1.22
+const CHART_VIEW_ANIM_EASE = 0.18
+const CHART_VIEW_ANIM_SNAP_START_MS = 1
+const CHART_VIEW_ANIM_SNAP_SPAN_MS = 0.5
 
 const TIME_AXIS_STEPS_MS = [
+	60000,
+	5 * 60000,
+	15 * 60000,
+	30 * 60000,
 	3600000,
 	3 * 3600000,
 	6 * 3600000,
@@ -512,6 +523,12 @@ export default {
 			lastFrameTime: 0,
 			chartResizeObserver: null,
 			chartDrawTimer: null,
+			chartViewStartMs: 0,
+			chartViewSpanMs: 0,
+			chartViewTargetStartMs: 0,
+			chartViewTargetSpanMs: 0,
+			chartViewAnimFrameId: null,
+			chartViewAnimLastTime: 0,
 			timeAxisTicks: [],
 			desktopMenuGuard: null,
 			geofences: [],
@@ -546,7 +563,18 @@ export default {
 			return PERIOD_PRESETS
 		},
 		mapTrackPoints() {
-			return (this.track?.points || []).filter((p) => p.lat != null && p.lon != null)
+			const valid = (this.track?.points || []).filter((p) => p.lat != null && p.lon != null)
+			const deduped = []
+			for (const point of valid) {
+				const prev = deduped[deduped.length - 1]
+				if (prev &&
+					Math.abs(prev.lat - point.lat) < 1e-6 &&
+					Math.abs(prev.lon - point.lon) < 1e-6 &&
+					!this.shouldKeepSamePlacePoint(prev, point))
+					continue
+				deduped.push(point)
+			}
+			return deduped
 		},
 		playbackSpeed() {
 			const logMin = Math.log(PLAYBACK_SPEED_MIN)
@@ -563,13 +591,19 @@ export default {
 			return `1с = ${Math.round(s / 60)}мин`
 		},
 		chartCursorLeft() {
-			return `${this.scrubberValue / 10}%`
+			const span = this.getChartViewSpanMs()
+			if (!span || !this.totalDuration)
+				return '0%'
+			const rel = (this.playbackTrackTime - this.getChartViewStartMs()) / span
+			return `${Math.max(0, Math.min(1, rel)) * 100}%`
 		},
 		chartSpeedMax() {
 			if (!this.mapTrackPoints.length) return CHART_SPEED_CAP
-			const speeds = this.mapTrackPoints.map((p) => this.getPointSpeedValue(p))
+			const speeds = this.mapTrackPoints.map((p) => this.getChartSpeedValue(p))
 			const dataMax = speeds.length ? Math.max(0, ...speeds) : 0
-			return Math.min(CHART_SPEED_CAP, Math.max(CHART_SPEED_FLOOR, dataMax))
+			if (dataMax <= 0) return CHART_SPEED_GRID * 3
+			const rounded = Math.ceil(dataMax / CHART_SPEED_GRID) * CHART_SPEED_GRID
+			return Math.min(CHART_SPEED_CAP, Math.max(CHART_SPEED_GRID * 2, rounded))
 		},
 		speedAxisLabels() {
 			const labels = []
@@ -636,6 +670,7 @@ export default {
 			this.chartDrawTimer = null
 		}
 		this.unbindChartDrag()
+		this.stopChartViewAnimation()
 		this.clearGeozoneClickTimer()
 		this.endGeozonePointDrag()
 		this.removeGeozoneDraftPointsCanvas()
@@ -851,9 +886,70 @@ export default {
 			}
 			return 0
 		},
+		shouldKeepSamePlacePoint(prev, point) {
+			if (prev.pointType === 'stationary_start' && point.pointType === 'stationary_end')
+				return true
+			if (prev.pointType === 'stationary_end' && point.pointType === 'stationary_start')
+				return true
+			return false
+		},
+		getChartSpeedValue(point) {
+			if (point?.pointType === 'stationary_start' ||
+				point?.pointType === 'stationary_end' ||
+				point?.pointType === 'heartbeat')
+				return 0
+			return this.getPointSpeedValue(point)
+		},
 		lerpAngle(from, to, t) {
 			let diff = ((to - from + 540) % 360) - 180
 			return (from + diff * t + 360) % 360
+		},
+		bearingFromTo(lat1, lon1, lat2, lon2) {
+			if (lat1 == null || lon1 == null || lat2 == null || lon2 == null)
+				return null
+
+			if (lat1 === lat2 && lon1 === lon2)
+				return null
+
+			const toRad = (deg) => deg * Math.PI / 180
+			const toDeg = (rad) => rad * 180 / Math.PI
+			const dLon = toRad(lon2 - lon1)
+			const y = Math.sin(dLon) * Math.cos(toRad(lat2))
+			const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+				Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon)
+
+			return (toDeg(Math.atan2(y, x)) + 360) % 360
+		},
+		resolvePointBearing(points, index) {
+			if (!points.length || index < 0 || index >= points.length)
+				return 0
+
+			if (index > 0) {
+				const prev = points[index - 1]
+				const current = points[index]
+				const bearing = this.bearingFromTo(prev.lat, prev.lon, current.lat, current.lon)
+				if (bearing != null)
+					return bearing
+			}
+
+			if (index < points.length - 1) {
+				const current = points[index]
+				const next = points[index + 1]
+				const bearing = this.bearingFromTo(current.lat, current.lon, next.lat, next.lon)
+				if (bearing != null)
+					return bearing
+			}
+
+			return 0
+		},
+		resolveSegmentBearing(points, segmentIndex) {
+			if (segmentIndex < 0 || segmentIndex >= points.length - 1)
+				return this.resolvePointBearing(points, Math.max(0, points.length - 1))
+
+			const p0 = points[segmentIndex]
+			const p1 = points[segmentIndex + 1]
+			return this.bearingFromTo(p0.lat, p0.lon, p1.lat, p1.lon) ??
+				this.resolvePointBearing(points, segmentIndex + 1)
 		},
 		buildTimeline() {
 			const points = this.mapTrackPoints
@@ -863,6 +959,150 @@ export default {
 				return
 			}
 			this.totalDuration = Math.max(1, this.pointTimes[this.pointTimes.length - 1] - this.pointTimes[0])
+			this.normalizeChartView()
+		},
+		resetChartView() {
+			this.stopChartViewAnimation()
+			this.chartViewStartMs = 0
+			this.chartViewSpanMs = 0
+			this.chartViewTargetStartMs = 0
+			this.chartViewTargetSpanMs = 0
+		},
+		getChartViewTargetSpanMs() {
+			if (!this.totalDuration)
+				return 1
+			if (!this.chartViewTargetSpanMs || this.chartViewTargetSpanMs >= this.totalDuration)
+				return this.totalDuration
+			return Math.max(this.getChartMinSpanMs(), this.chartViewTargetSpanMs)
+		},
+		getChartViewTargetStartMs() {
+			const span = this.getChartViewTargetSpanMs()
+			if (!this.totalDuration || span >= this.totalDuration)
+				return 0
+			return Math.max(0, Math.min(this.totalDuration - span, this.chartViewTargetStartMs))
+		},
+		syncChartViewTargetsToDisplay() {
+			this.chartViewTargetStartMs = this.getChartViewStartMs()
+			this.chartViewTargetSpanMs = this.chartViewSpanMs
+		},
+		setChartViewTarget(startMs, spanMs) {
+			if (!this.totalDuration) {
+				this.resetChartView()
+				return
+			}
+
+			if (spanMs <= 0 || spanMs >= this.totalDuration) {
+				this.chartViewTargetStartMs = 0
+				this.chartViewTargetSpanMs = 0
+			} else {
+				const span = Math.max(this.getChartMinSpanMs(), Math.min(this.totalDuration, spanMs))
+				this.chartViewTargetSpanMs = span
+				this.chartViewTargetStartMs = Math.max(0, Math.min(this.totalDuration - span, startMs))
+			}
+
+			this.startChartViewAnimation()
+		},
+		stopChartViewAnimation() {
+			if (!this.chartViewAnimFrameId)
+				return
+			cancelAnimationFrame(this.chartViewAnimFrameId)
+			this.chartViewAnimFrameId = null
+			this.chartViewAnimLastTime = 0
+		},
+		startChartViewAnimation() {
+			if (this.chartViewAnimFrameId)
+				return
+
+			this.chartViewAnimLastTime = 0
+			this.chartViewAnimFrameId = requestAnimationFrame((ts) => this.tickChartViewAnimation(ts))
+		},
+		tickChartViewAnimation(timestamp) {
+			if (!this.totalDuration) {
+				this.stopChartViewAnimation()
+				return
+			}
+
+			const lastTime = this.chartViewAnimLastTime || timestamp
+			const deltaMs = Math.min(48, Math.max(1, timestamp - lastTime))
+			this.chartViewAnimLastTime = timestamp
+			const ease = 1 - Math.pow(1 - CHART_VIEW_ANIM_EASE, deltaMs / 16.67)
+
+			const targetStart = this.getChartViewTargetStartMs()
+			const targetSpan = this.getChartViewTargetSpanMs()
+			const currentStart = this.getChartViewStartMs()
+			const currentSpan = this.getChartViewSpanMs()
+			const isFullTarget = !this.chartViewTargetSpanMs || this.chartViewTargetSpanMs >= this.totalDuration
+
+			let nextStart = currentStart + (targetStart - currentStart) * ease
+			let nextSpan = currentSpan + (targetSpan - currentSpan) * ease
+
+			if (isFullTarget) {
+				nextStart = currentStart + (0 - currentStart) * ease
+				nextSpan = currentSpan + (this.totalDuration - currentSpan) * ease
+			}
+
+			this.chartViewStartMs = nextStart
+			this.chartViewSpanMs = nextSpan
+
+			this.drawSpeedChart()
+
+			const startDone = Math.abs(targetStart - this.getChartViewStartMs()) <= CHART_VIEW_ANIM_SNAP_START_MS
+			const spanDone = Math.abs(targetSpan - this.getChartViewSpanMs()) <= CHART_VIEW_ANIM_SNAP_SPAN_MS
+
+			if (isFullTarget) {
+				if (Math.abs(this.getChartViewStartMs()) <= CHART_VIEW_ANIM_SNAP_START_MS &&
+					Math.abs(this.getChartViewSpanMs() - this.totalDuration) <= CHART_VIEW_ANIM_SNAP_SPAN_MS) {
+					this.chartViewStartMs = 0
+					this.chartViewSpanMs = 0
+					this.chartViewTargetStartMs = 0
+					this.chartViewTargetSpanMs = 0
+					this.stopChartViewAnimation()
+					this.drawSpeedChart()
+					return
+				}
+			} else if (startDone && spanDone) {
+				this.chartViewStartMs = targetStart
+				this.chartViewSpanMs = this.chartViewTargetSpanMs
+				this.stopChartViewAnimation()
+				this.drawSpeedChart()
+				return
+			}
+
+			this.chartViewAnimFrameId = requestAnimationFrame((ts) => this.tickChartViewAnimation(ts))
+		},
+		getChartMinSpanMs() {
+			if (!this.totalDuration)
+				return 60000
+			return Math.max(60000, this.totalDuration * 0.005)
+		},
+		getChartViewSpanMs() {
+			if (!this.totalDuration)
+				return 1
+			if (!this.chartViewSpanMs || this.chartViewSpanMs >= this.totalDuration)
+				return this.totalDuration
+			return Math.max(this.getChartMinSpanMs(), this.chartViewSpanMs)
+		},
+		getChartViewStartMs() {
+			const span = this.getChartViewSpanMs()
+			if (!this.totalDuration || span >= this.totalDuration)
+				return 0
+			return Math.max(0, Math.min(this.totalDuration - span, this.chartViewStartMs))
+		},
+		normalizeChartView() {
+			if (!this.totalDuration) {
+				this.resetChartView()
+				return
+			}
+
+			const span = this.getChartViewSpanMs()
+			if (span >= this.totalDuration) {
+				this.resetChartView()
+				return
+			}
+
+			this.chartViewStartMs = Math.max(0, Math.min(this.totalDuration - span, this.chartViewStartMs))
+			this.chartViewSpanMs = span
+			this.syncChartViewTargetsToDisplay()
 		},
 		getStateAtTrackTime(trackTimeMs) {
 			const points = this.mapTrackPoints
@@ -874,7 +1114,7 @@ export default {
 				return {
 					lat: p.lat,
 					lon: p.lon,
-					direction: p.direction ?? 0,
+					direction: this.resolvePointBearing(points, 0),
 					time: p.timeLocal,
 					speed: this.getPointSpeed(p),
 					progress: 0,
@@ -889,7 +1129,7 @@ export default {
 				return {
 					lat: p.lat,
 					lon: p.lon,
-					direction: p.direction ?? 0,
+					direction: this.resolvePointBearing(points, lastIdx),
 					time: p.timeLocal,
 					speed: this.getPointSpeed(p),
 					progress: 1,
@@ -906,12 +1146,10 @@ export default {
 					const t = (absoluteTime - t0) / segDur
 					const p0 = points[i]
 					const p1 = points[i + 1]
-					const d0 = p0.direction ?? 0
-					const d1 = p1.direction ?? d0
 					return {
 						lat: p0.lat + (p1.lat - p0.lat) * t,
 						lon: p0.lon + (p1.lon - p0.lon) * t,
-						direction: this.lerpAngle(d0, d1, t),
+						direction: this.resolveSegmentBearing(points, i),
 						time: t >= 0.5 ? p1.timeLocal : p0.timeLocal,
 						speed: this.getPointSpeed(t >= 0.5 ? p1 : p0),
 						progress: trackTimeMs / this.totalDuration,
@@ -925,7 +1163,7 @@ export default {
 			return {
 				lat: p.lat,
 				lon: p.lon,
-				direction: p.direction ?? 0,
+				direction: this.resolvePointBearing(points, lastIdx),
 				time: p.timeLocal,
 				speed: this.getPointSpeed(p),
 				progress: 1,
@@ -990,6 +1228,36 @@ export default {
 				if (!this.map.hasLayer(layer))
 					this.map.addLayer(layer)
 			}
+		},
+		fitTrackOnMap(latLngs) {
+			if (!this.map || !latLngs.length)
+				return
+
+			if (latLngs.length === 1) {
+				this.map.setView(latLngs[0], 16)
+				return
+			}
+
+			const bounds = L.latLngBounds(latLngs)
+			if (!bounds.isValid()) {
+				this.map.setView(latLngs[0], 16)
+				return
+			}
+
+			const northEast = bounds.getNorthEast()
+			const southWest = bounds.getSouthWest()
+			if (northEast.lat === southWest.lat && northEast.lng === southWest.lng)
+				this.map.setView(bounds.getCenter(), 16)
+			else
+				this.map.fitBounds(bounds, { padding: [40, 40] })
+		},
+		isSameTrackLocation(latLngs) {
+			if (latLngs.length < 2)
+				return latLngs.length === 1
+
+			const [lat0, lon0] = latLngs[0]
+			return latLngs.every(([lat, lon]) =>
+				Math.abs(lat - lat0) < 1e-6 && Math.abs(lon - lon0) < 1e-6)
 		},
 		handleMapResize() {
 			if (window.innerWidth > 768)
@@ -1143,9 +1411,12 @@ export default {
 				return { stepMs: 0, ticks: [] }
 			}
 
-			const baseTime = this.pointTimes[0]
-			const endTime = baseTime + this.totalDuration
-			const duration = this.totalDuration || 1
+			const trackBase = this.pointTimes[0]
+			const viewStart = this.getChartViewStartMs()
+			const viewSpan = this.getChartViewSpanMs()
+			const baseTime = trackBase + viewStart
+			const endTime = baseTime + viewSpan
+			const duration = viewSpan || 1
 			const minGap = this.getTimeAxisMinGap(plotWidth)
 			const font = this.getTimeAxisFont(plotWidth)
 
@@ -1211,8 +1482,11 @@ export default {
 
 			const padY = 0
 			const chartH = height - padY * 2
-			const baseTime = this.pointTimes[0]
-			const duration = this.totalDuration || 1
+			const trackBase = this.pointTimes[0]
+			const viewStart = this.getChartViewStartMs()
+			const viewSpan = this.getChartViewSpanMs()
+			const baseTime = trackBase + viewStart
+			const duration = viewSpan || 1
 
 			const speedToY = (speed) =>
 				padY + chartH - (Math.min(speed, chartSpeedMax) / chartSpeedMax) * chartH
@@ -1236,39 +1510,147 @@ export default {
 			}
 
 			const points = this.mapTrackPoints
-			const speeds = points.map((p) => this.getPointSpeedValue(p))
-			const coords = points.map((p, i) => ({
-				x: ((this.pointTimes[i] - baseTime) / duration) * width,
-				y: speedToY(speeds[i]),
-			}))
+			const speeds = points.map((p) => this.getChartSpeedValue(p))
+			const steps = []
+			for (let i = 0; i < points.length; i++) {
+				const t0 = this.pointTimes[i] - trackBase
+				const t1 = i < points.length - 1
+					? this.pointTimes[i + 1] - trackBase
+					: t0 + 1
+				const segStart = t0 - viewStart
+				const segEnd = t1 - viewStart
+				if (segEnd <= 0 || segStart >= viewSpan)
+					continue
+				const x0 = (Math.max(0, segStart) / viewSpan) * width
+				const x1 = (Math.min(viewSpan, segEnd) / viewSpan) * width
+				steps.push({
+					x0,
+					x1: Math.max(x0, x1),
+					y: speedToY(speeds[i]),
+				})
+			}
 
-			if (coords.length < 2) return
+			if (!steps.length) return
 
-			ctx.beginPath()
-			ctx.moveTo(coords[0].x, height - padY)
-			ctx.lineTo(coords[0].x, coords[0].y)
-			for (let i = 1; i < coords.length; i++)
-				ctx.lineTo(coords[i].x, coords[i].y)
-			ctx.lineTo(coords[coords.length - 1].x, height - padY)
-			ctx.closePath()
+			this.traceSpeedChartFill(ctx, steps, height, padY)
 			ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'
 			ctx.fill()
 
-			ctx.beginPath()
-			ctx.moveTo(coords[0].x, coords[0].y)
-			for (let i = 1; i < coords.length; i++)
-				ctx.lineTo(coords[i].x, coords[i].y)
+			this.traceSpeedChartTopEdge(ctx, steps)
 			ctx.strokeStyle = '#3b82f6'
 			ctx.lineWidth = 1.5
+			ctx.lineJoin = 'round'
 			ctx.stroke()
+		},
+		getStepCornerRadius(step, nextStep) {
+			if (!nextStep || Math.abs(step.y - nextStep.y) < 0.5)
+				return 0
+
+			const junctionWidth = Math.min(
+				Math.max(0, step.x1 - step.x0),
+				Math.max(0, nextStep.x1 - nextStep.x0),
+			) / 2
+			const verticalSpan = Math.abs(nextStep.y - step.y) / 2
+
+			return Math.min(CHART_STEP_CORNER_RADIUS, junctionWidth, verticalSpan)
+		},
+		traceSpeedChartTopEdge(ctx, steps) {
+			ctx.beginPath()
+			ctx.moveTo(steps[0].x0, steps[0].y)
+
+			for (let i = 0; i < steps.length; i++) {
+				const step = steps[i]
+				const next = steps[i + 1]
+				const r = this.getStepCornerRadius(step, next)
+
+				if (!next || r <= 0) {
+					ctx.lineTo(step.x1, step.y)
+					continue
+				}
+
+				const junctionX = step.x1
+				const dy = next.y > step.y ? 1 : -1
+
+				ctx.lineTo(junctionX - r, step.y)
+				ctx.quadraticCurveTo(junctionX, step.y, junctionX, step.y + dy * r)
+				ctx.lineTo(junctionX, next.y - dy * r)
+				ctx.quadraticCurveTo(junctionX, next.y, junctionX + r, next.y)
+			}
+		},
+		traceSpeedChartFill(ctx, steps, height, padY) {
+			ctx.beginPath()
+			ctx.moveTo(steps[0].x0, height - padY)
+			ctx.lineTo(steps[0].x0, steps[0].y)
+
+			for (let i = 0; i < steps.length; i++) {
+				const step = steps[i]
+				const next = steps[i + 1]
+				const r = this.getStepCornerRadius(step, next)
+
+				if (!next || r <= 0) {
+					ctx.lineTo(step.x1, step.y)
+					continue
+				}
+
+				const junctionX = step.x1
+				const dy = next.y > step.y ? 1 : -1
+
+				ctx.lineTo(junctionX - r, step.y)
+				ctx.quadraticCurveTo(junctionX, step.y, junctionX, step.y + dy * r)
+				ctx.lineTo(junctionX, next.y - dy * r)
+				ctx.quadraticCurveTo(junctionX, next.y, junctionX + r, next.y)
+			}
+
+			ctx.lineTo(steps[steps.length - 1].x1, height - padY)
+			ctx.closePath()
 		},
 		seekChartFromEvent(clientX, targetEl) {
 			const rect = targetEl.getBoundingClientRect()
 			if (!rect.width) return
 
 			const progress = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-			this.scrubberValue = Math.round(progress * 1000)
-			this.applyPlaybackState(progress * this.totalDuration)
+			const trackTime = this.getChartViewStartMs() + progress * this.getChartViewSpanMs()
+			this.scrubberValue = Math.round((trackTime / this.totalDuration) * 1000)
+			this.applyPlaybackState(trackTime)
+		},
+		onChartWheel(e) {
+			if (!this.totalDuration)
+				return
+
+			const plot = e.currentTarget
+			const rect = plot.getBoundingClientRect()
+			if (!rect.width)
+				return
+
+			if (!this.chartViewAnimFrameId &&
+				this.chartViewTargetSpanMs === 0 &&
+				this.chartViewSpanMs === 0)
+				this.syncChartViewTargetsToDisplay()
+
+			const mouseRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+			const start = this.getChartViewTargetStartMs()
+			const span = this.getChartViewTargetSpanMs()
+
+			if (e.ctrlKey) {
+				const factor = e.deltaY < 0 ? CHART_ZOOM_IN_FACTOR : CHART_ZOOM_OUT_FACTOR
+				let newSpan = span * factor
+				newSpan = Math.max(this.getChartMinSpanMs(), Math.min(this.totalDuration, newSpan))
+
+				if (newSpan >= this.totalDuration)
+					this.setChartViewTarget(0, 0)
+				else {
+					const timeAtMouse = start + mouseRatio * span
+					const newStart = timeAtMouse - mouseRatio * newSpan
+					this.setChartViewTarget(newStart, newSpan)
+				}
+			} else {
+				const delta = e.deltaY + e.deltaX
+				if (!delta || span >= this.totalDuration)
+					return
+
+				const panMs = delta * (span / rect.width)
+				this.setChartViewTarget(start + panMs, span)
+			}
 		},
 		onChartPointerDown(e) {
 			this.chartDragging = true
@@ -1999,6 +2381,7 @@ export default {
 			if (!this.mapTrackPoints.length) return
 
 			this.buildTimeline()
+			this.resetChartView()
 			this.playbackTrackTime = 0
 			this.playing = false
 			this.scrubberValue = 0
@@ -2134,13 +2517,25 @@ export default {
 
 			this.buildTimeline()
 			const latLngs = points.map((p) => [p.lat, p.lon])
+			const sameLocation = this.isSameTrackLocation(latLngs)
 
-			this.backgroundLine = L.polyline(latLngs, {
-				color: '#64748b',
-				weight: 4,
-				opacity: 0.45,
-			})
-			this.staticLayer.addLayer(this.backgroundLine)
+			if (sameLocation) {
+				L.circle(latLngs[0], {
+					radius: 35,
+					color: '#64748b',
+					weight: 2,
+					opacity: 0.7,
+					fillColor: '#64748b',
+					fillOpacity: 0.12,
+				}).addTo(this.staticLayer)
+			} else {
+				this.backgroundLine = L.polyline(latLngs, {
+					color: '#64748b',
+					weight: 4,
+					opacity: 0.45,
+				})
+				this.staticLayer.addLayer(this.backgroundLine)
+			}
 
 			const first = points[0]
 			const last = points[points.length - 1]
@@ -2155,7 +2550,7 @@ export default {
 
 			this.$nextTick(() => {
 				if (!silent)
-					this.map.fitBounds(this.backgroundLine.getBounds(), { padding: [40, 40] })
+					this.fitTrackOnMap(latLngs)
 
 				if (silent && playbackState)
 					this.restorePlaybackState(playbackState)
