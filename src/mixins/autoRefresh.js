@@ -15,10 +15,11 @@ export default {
 	methods: {
 		startAutoRefresh() {
 			this.stopAutoRefresh()
+			const intervalMs = this.autoRefreshMs ?? AUTO_REFRESH_MS
 			this.autoRefreshTimer = setInterval(() => {
 				if (typeof this.onAutoRefresh === 'function')
 					this.onAutoRefresh()
-			}, AUTO_REFRESH_MS)
+			}, intervalMs)
 		},
 		stopAutoRefresh() {
 			if (this.autoRefreshTimer) {

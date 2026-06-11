@@ -81,6 +81,7 @@ export function getTrack(deviceId, params = {}) {
 	const query = new URLSearchParams()
 	if (params.from) query.set('from', params.from)
 	if (params.to) query.set('to', params.to)
+	if (params.raw) query.set('raw', 'true')
 
 	const qs = query.toString()
 	const path = `/tracks/${encodeURIComponent(deviceId)}${qs ? `?${qs}` : ''}`

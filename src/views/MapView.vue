@@ -27,6 +27,10 @@
 					aria-label="Начало периода"
 					:disabled="loading"
 					@change="onFromFilterChange"
+					@focus="onDateInputSegmentChange($event, 'from')"
+					@mousedown="onDateInputSegmentChange($event, 'from')"
+					@keyup="onDateInputSegmentChange($event, 'from')"
+					@wheel.prevent="onDateInputWheel($event, 'from')"
 				/>
 
 				<input
@@ -37,11 +41,23 @@
 					aria-label="Конец периода"
 					:disabled="loading"
 					@change="onToFilterChange"
+					@focus="onDateInputSegmentChange($event, 'to')"
+					@mousedown="onDateInputSegmentChange($event, 'to')"
+					@keyup="onDateInputSegmentChange($event, 'to')"
+					@wheel.prevent="onDateInputWheel($event, 'to')"
 				/>
 
-				<button class="btn btn-primary btn-compact" type="button" :disabled="loading" @click="applyTrack">
-					{{ loading ? '…' : 'Обновить' }}
-				</button>
+				<transition name="apply-btn">
+					<button
+						v-if="showApplyButton"
+						class="btn btn-primary btn-compact map-apply-btn"
+						type="button"
+						:disabled="loading"
+						@click="applyTrack"
+					>
+						{{ loading ? '…' : 'Обновить' }}
+					</button>
+				</transition>
 
 				<button
 					class="btn btn-compact"
@@ -142,6 +158,10 @@
 									type="datetime-local"
 									:disabled="loading"
 									@change="onFromFilterChange"
+									@focus="onDateInputSegmentChange($event, 'from')"
+									@mousedown="onDateInputSegmentChange($event, 'from')"
+									@keyup="onDateInputSegmentChange($event, 'from')"
+									@wheel.prevent="onDateInputWheel($event, 'from')"
 								/>
 							</div>
 							<div class="map-toolbar-field">
@@ -153,13 +173,25 @@
 									type="datetime-local"
 									:disabled="loading"
 									@change="onToFilterChange"
+									@focus="onDateInputSegmentChange($event, 'to')"
+									@mousedown="onDateInputSegmentChange($event, 'to')"
+									@keyup="onDateInputSegmentChange($event, 'to')"
+									@wheel.prevent="onDateInputWheel($event, 'to')"
 								/>
 							</div>
 						</div>
 
-						<button class="btn btn-primary" type="button" :disabled="loading" @click="applyTrack">
-							{{ loading ? 'Обновление…' : 'Обновить' }}
-						</button>
+						<transition name="apply-btn">
+							<button
+								v-if="showApplyButton"
+								class="btn btn-primary map-apply-btn"
+								type="button"
+								:disabled="loading"
+								@click="applyTrack"
+							>
+								{{ loading ? 'Обновление…' : 'Обновить' }}
+							</button>
+						</transition>
 
 						<div class="map-toolbar-section">
 							<div class="map-toolbar-section-title">Геозоны</div>
@@ -263,14 +295,21 @@
 
 				<div v-if="hasTrack && playbackInfo" class="playback-info">
 					<div class="playback-info-time">{{ playbackInfo.time }}</div>
-					<div v-if="playbackInfo.speed" class="playback-info-speed">{{ playbackInfo.speed }}</div>
+					<div class="playback-info-stats">
+						<div class="playback-info-distance">{{ playbackInfo.distance }}</div>
+						<div class="playback-info-speed">
+							<span class="playback-info-speed-value">{{ playbackInfo.speed }}</span>
+							<span class="playback-info-speed-unit">км/ч</span>
+						</div>
+					</div>
 					<div v-if="playbackInfo.geofences && playbackInfo.geofences !== '—'" class="playback-info-geofences">
 						⬡ {{ playbackInfo.geofences }}
 					</div>
 				</div>
 			</div>
 
-			<div v-if="hasTrack" class="speed-chart-panel">
+			<div class="speed-chart-panel" :class="{ 'speed-chart-panel--loading': loading }">
+				<div v-if="loading" class="speed-chart-spinner" aria-label="Загрузка трека"></div>
 				<div class="playback-main">
 					<div class="playback-chart-body">
 						<div class="playback-chart-y-axis">
@@ -283,6 +322,7 @@
 						<div class="playback-chart-plot-column">
 							<div
 								class="playback-chart-speed-area"
+								:class="{ 'playback-chart-speed-area--disabled': loading || !hasTrack }"
 								title="Ctrl + колёсико — масштаб, колёсико — прокрутка"
 								@mousedown.prevent="onChartPointerDown"
 								@touchstart.prevent="onChartTouchStart"
@@ -306,6 +346,7 @@
 						<button
 							class="playback-btn"
 							type="button"
+							:disabled="loading || !hasTrack"
 							:aria-label="playing ? 'Пауза' : 'Пуск'"
 							@click="togglePlay"
 						>
@@ -320,8 +361,25 @@
 								type="range"
 								min="0"
 								max="100"
+								:disabled="loading || !hasTrack"
 								v-model.number="speedSlider"
 							/>
+						</div>
+
+						<div class="playback-track-mode">
+							<label
+								class="playback-track-switch"
+								:title="optimizedTrack ? 'Оптимизированный трек' : 'Оригинальный трек'"
+							>
+								<input
+									type="checkbox"
+									v-model="optimizedTrack"
+									:disabled="loading"
+									@change="onTrackModeChange"
+								/>
+								<span class="playback-track-switch-slider"></span>
+							</label>
+							<span class="playback-track-points-count" :title="'Точек в треке'">{{ mapTrackPoints.length }}</span>
 						</div>
 					</div>
 				</div>
@@ -353,6 +411,8 @@ const CHART_ZOOM_OUT_FACTOR = 1.22
 const CHART_VIEW_ANIM_EASE = 0.18
 const CHART_VIEW_ANIM_SNAP_START_MS = 1
 const CHART_VIEW_ANIM_SNAP_SPAN_MS = 0.5
+const PLAYBACK_GAP_HOLD_MS = 10 * 60 * 1000
+const PLAYBACK_STATIONARY_DISTANCE_KM = 0.15
 
 const TIME_AXIS_STEPS_MS = [
 	60000,
@@ -500,15 +560,23 @@ export default {
 			periodPreset: 'today',
 			fromManual: false,
 			toManual: false,
+			appliedFrom: '',
+			appliedTo: '',
+			dateInputSegment: null,
+			autoRefreshMs: 10000,
 			refreshInFlight: false,
 			track: null,
-			loading: false,
+			startMarker: null,
+			endMarker: null,
+			loading: true,
 			error: '',
 			map: null,
 			staticLayer: null,
 			playbackLayer: null,
 			pointTimes: [],
 			totalDuration: 0,
+			smartFromApplied: false,
+			optimizedTrack: true,
 			playing: false,
 			playbackTrackTime: 0,
 			speedSlider: 25,
@@ -519,6 +587,7 @@ export default {
 			progressLine: null,
 			vehicleMarker: null,
 			backgroundLine: null,
+			backgroundGapLayer: null,
 			animFrameId: null,
 			lastFrameTime: 0,
 			chartResizeObserver: null,
@@ -563,18 +632,7 @@ export default {
 			return PERIOD_PRESETS
 		},
 		mapTrackPoints() {
-			const valid = (this.track?.points || []).filter((p) => p.lat != null && p.lon != null)
-			const deduped = []
-			for (const point of valid) {
-				const prev = deduped[deduped.length - 1]
-				if (prev &&
-					Math.abs(prev.lat - point.lat) < 1e-6 &&
-					Math.abs(prev.lon - point.lon) < 1e-6 &&
-					!this.shouldKeepSamePlacePoint(prev, point))
-					continue
-				deduped.push(point)
-			}
-			return deduped
+			return this.dedupeTrackPoints(this.track?.points)
 		},
 		playbackSpeed() {
 			const logMin = Math.log(PLAYBACK_SPEED_MIN)
@@ -599,7 +657,8 @@ export default {
 		},
 		chartSpeedMax() {
 			if (!this.mapTrackPoints.length) return CHART_SPEED_CAP
-			const speeds = this.mapTrackPoints.map((p) => this.getChartSpeedValue(p))
+			const speeds = this.mapTrackPoints.map((p, i) =>
+				this.getChartSegmentSpeedValue(p, this.mapTrackPoints[i + 1]))
 			const dataMax = speeds.length ? Math.max(0, ...speeds) : 0
 			if (dataMax <= 0) return CHART_SPEED_GRID * 3
 			const rounded = Math.ceil(dataMax / CHART_SPEED_GRID) * CHART_SPEED_GRID
@@ -627,6 +686,9 @@ export default {
 
 			return `Кликайте по карте: ${this.geozoneDraftPoints.length} / ${this.maxGeozonePoints} (мин. ${this.minGeozonePoints})`
 		},
+		showApplyButton() {
+			return this.from !== this.appliedFrom || this.to !== this.appliedTo
+		},
 	},
 	watch: {
 		hasTrack(ready) {
@@ -636,9 +698,19 @@ export default {
 					this.scheduleDrawSpeedChart()
 					this.bindChartResizeObserver()
 				})
-			} else {
+			} else if (!this.loading) {
 				this.unbindChartResizeObserver()
 				this.timeAxisTicks = []
+			}
+		},
+		loading(isLoading) {
+			if (!isLoading) {
+				this.$nextTick(() => {
+					this.updateViewportMetrics()
+					if (this.hasTrack)
+						this.scheduleDrawSpeedChart()
+					this.bindChartResizeObserver()
+				})
 			}
 		},
 	},
@@ -648,8 +720,9 @@ export default {
 		this.$nextTick(() => {
 			this.initMap()
 			this.loadGeofences()
-			this.loadTrack()
+			this.bindChartResizeObserver()
 			this.updateViewportMetrics()
+			this.loadTrack({ applySmartFrom: true })
 		})
 		window.addEventListener('resize', this.handleMapResize)
 		window.addEventListener('orientationchange', this.onViewportChange)
@@ -688,6 +761,11 @@ export default {
 	methods: {
 		initDefaultDates() {
 			this.applyPeriodPreset('today')
+			this.syncAppliedDates()
+		},
+		syncAppliedDates() {
+			this.appliedFrom = this.from
+			this.appliedTo = this.to
 		},
 		startOfDay(date) {
 			const d = new Date(date)
@@ -799,11 +877,6 @@ export default {
 				return
 
 			await this.loadTrack({ silent: true })
-
-			if (!this.canAutoRefresh())
-				return
-
-			await this.loadGeofences({ silent: true })
 		},
 		capturePlaybackState() {
 			return {
@@ -849,6 +922,202 @@ export default {
 			const pad = (n) => String(n).padStart(2, '0')
 			return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 		},
+		parseFilterDateTimeMs(localValue) {
+			const date = this.parseLocalInput(localValue)
+			return date ? date.getTime() : 0
+		},
+		getTimelineStartMs() {
+			const filterMs = this.parseFilterDateTimeMs(this.from)
+			if (filterMs)
+				return filterMs
+			return this.pointTimes[0] ?? 0
+		},
+		getTimelineEndMs() {
+			const filterMs = this.parseFilterDateTimeMs(this.to)
+			if (filterMs)
+				return filterMs
+			if (this.pointTimes.length)
+				return this.pointTimes[this.pointTimes.length - 1]
+			return this.getTimelineStartMs() + 1
+		},
+		findFirstMovementTimeMs() {
+			const points = this.track?.points || []
+			for (const point of points) {
+				if (point.pointType === 'moving' && point.lat != null && point.lon != null)
+					return this.parsePointTime(point)
+			}
+			return null
+		},
+		tryApplySmartFromFilter() {
+			if (this.smartFromApplied || this.periodPreset !== 'today')
+				return false
+
+			const firstMovementMs = this.findFirstMovementTimeMs()
+			if (!firstMovementMs)
+				return false
+
+			const dayStart = this.parseFilterDateTimeMs(this.from) || this.startOfDay(new Date()).getTime()
+			const oneAmMs = dayStart + 3600000
+			if (firstMovementMs <= oneAmMs)
+				return false
+
+			const newFromMs = firstMovementMs - 3600000
+			const newFrom = this.toLocalInput(new Date(newFromMs))
+			if (newFrom === this.from)
+				return false
+
+			this.from = newFrom
+			this.fromManual = true
+			this.periodPreset = 'custom'
+			this.smartFromApplied = true
+			return true
+		},
+		parseLocalInput(localValue) {
+			if (!localValue)
+				return null
+
+			const [datePart, timePart] = localValue.split('T')
+			if (!datePart)
+				return null
+
+			const [y, m, d] = datePart.split('-').map(Number)
+			const [hh, mm] = (timePart || '00:00').split(':').map(Number)
+			if ([y, m, d, hh, mm].some((n) => Number.isNaN(n)))
+				return null
+
+			return new Date(y, m - 1, d, hh, mm)
+		},
+		detectDateTimeSegmentFromPointer(input, clientX) {
+			const rect = input.getBoundingClientRect()
+			if (!rect.width)
+				return 'year'
+
+			const pickerReserve = Math.min(34, rect.width * 0.18)
+			const editableWidth = Math.max(1, rect.width - pickerReserve)
+			const x = Math.max(0, Math.min(editableWidth, clientX - rect.left))
+			const ratio = x / editableWidth
+			const weights = [4, 2, 2, 2, 2]
+			const segments = ['year', 'month', 'day', 'hour', 'minute']
+			const total = weights.reduce((sum, weight) => sum + weight, 0)
+			let acc = 0
+
+			for (let i = 0; i < segments.length; i++) {
+				acc += weights[i] / total
+				if (ratio <= acc)
+					return segments[i]
+			}
+
+			return 'minute'
+		},
+		detectDateTimeSegment(input, clientX) {
+			if (!input?.value)
+				return null
+
+			if (typeof clientX === 'number')
+				return this.detectDateTimeSegmentFromPointer(input, clientX)
+
+			const start = input.selectionStart ?? 0
+			const end = input.selectionEnd ?? 0
+			if (start === 0 && end === 0)
+				return null
+
+			const anchor = start === end ? start : Math.floor((start + end) / 2)
+
+			if (anchor <= 4)
+				return 'year'
+			if (anchor <= 7)
+				return 'month'
+			if (anchor <= 10)
+				return 'day'
+			if (anchor <= 13)
+				return 'hour'
+			return 'minute'
+		},
+		getDateTimeSegmentRange(segment) {
+			const ranges = {
+				year: [0, 4],
+				month: [5, 7],
+				day: [8, 10],
+				hour: [11, 13],
+				minute: [14, 16],
+			}
+			return ranges[segment] || null
+		},
+		selectDateTimeSegment(input, segment) {
+			const range = this.getDateTimeSegmentRange(segment)
+			if (!input || !range)
+				return
+
+			try {
+				input.setSelectionRange(range[0], range[1])
+			} catch {
+				// datetime-local may reject selection in some browsers
+			}
+		},
+		adjustDateTimeValue(localValue, segment, delta) {
+			const date = this.parseLocalInput(localValue)
+			if (!date || !delta)
+				return localValue
+
+			if (segment === 'year')
+				date.setFullYear(date.getFullYear() + delta)
+			else if (segment === 'month')
+				date.setMonth(date.getMonth() + delta)
+			else if (segment === 'day')
+				date.setDate(date.getDate() + delta)
+			else if (segment === 'hour')
+				date.setHours(date.getHours() + delta)
+			else if (segment === 'minute')
+				date.setMinutes(date.getMinutes() + delta)
+
+			return this.toLocalInput(date)
+		},
+		onDateInputSegmentChange(e, field) {
+			const input = e.target
+			const segment = this.detectDateTimeSegment(input, e.clientX)
+			if (!segment)
+				return
+
+			this.dateInputSegment = {
+				field,
+				segment,
+				inputId: input.id,
+			}
+		},
+		onDateInputWheel(e, field) {
+			if (e.target.disabled)
+				return
+
+			const input = e.target
+			if (document.activeElement !== input)
+				return
+
+			let segment = null
+			if (this.dateInputSegment?.field === field && this.dateInputSegment?.inputId === input.id)
+				segment = this.dateInputSegment.segment
+
+			if (!segment)
+				segment = this.detectDateTimeSegmentFromPointer(input, e.clientX)
+			if (!segment)
+				return
+
+			const delta = e.deltaY < 0 ? 1 : -1
+			const current = field === 'from' ? this.from : this.to
+			const next = this.adjustDateTimeValue(current, segment, delta)
+			if (next === current)
+				return
+
+			if (field === 'from') {
+				this.from = next
+				this.onFromFilterChange()
+			} else {
+				this.to = next
+				this.onToFilterChange()
+			}
+
+			this.dateInputSegment = { field, segment, inputId: input.id }
+			this.$nextTick(() => this.selectDateTimeSegment(input, segment))
+		},
 		toApiDateTime(localValue) {
 			if (!localValue) return ''
 			const [datePart, timePart] = localValue.split('T')
@@ -876,27 +1145,188 @@ export default {
 		},
 		getPointSpeedValue(point) {
 			if (point == null) return 0
-			if (point.speedKmh != null && point.speedKmh !== '') {
-				const n = Number(point.speedKmh)
-				if (!Number.isNaN(n)) return n
-			}
 			if (point.speed != null && point.speed !== '') {
 				const n = parseFloat(String(point.speed).replace(/[^\d.,]/g, '').replace(',', '.'))
 				if (!Number.isNaN(n)) return n
 			}
+			if (point.speedKmh != null && point.speedKmh !== '') {
+				const n = Number(point.speedKmh)
+				if (!Number.isNaN(n)) return n
+			}
 			return 0
+		},
+		haversineKm(lat1, lon1, lat2, lon2) {
+			const R = 6371
+			const p = Math.PI / 180
+			const dLat = (lat2 - lat1) * p
+			const dLon = (lon2 - lon1) * p
+			const a = Math.sin(dLat / 2) ** 2 +
+				Math.cos(lat1 * p) * Math.cos(lat2 * p) * Math.sin(dLon / 2) ** 2
+			return 2 * R * Math.asin(Math.sqrt(a))
+		},
+		getPathDistanceKm(latLngs) {
+			if (!latLngs || latLngs.length < 2)
+				return 0
+
+			let total = 0
+			for (let i = 1; i < latLngs.length; i++)
+				total += this.haversineKm(
+					latLngs[i - 1][0],
+					latLngs[i - 1][1],
+					latLngs[i][0],
+					latLngs[i][1],
+				)
+			return total
+		},
+		formatDistanceKm(km) {
+			if (km < 0.001)
+				return '0 м'
+			if (km < 1)
+				return `${Math.round(km * 1000)} м`
+			if (km < 10)
+				return `${km.toFixed(1)} км`
+			return `${Math.round(km)} км`
+		},
+		formatPlaybackSpeedValue(speedKmh) {
+			const value = Math.max(0, speedKmh)
+			if (value < 10)
+				return Number(value.toFixed(1)).toString()
+			return String(Math.round(value))
+		},
+		formatPlaybackTime(trackTimeMs) {
+			const absoluteMs = this.getTimelineStartMs() + trackTimeMs
+			const d = new Date(absoluteMs)
+			const pad = (n) => String(n).padStart(2, '0')
+			return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+		},
+		getChartSpeedAtTrackTime(trackTimeMs) {
+			const points = this.mapTrackPoints
+			if (!points.length)
+				return 0
+
+			const absoluteTime = this.getTimelineStartMs() + trackTimeMs
+			const lastIdx = points.length - 1
+
+			if (absoluteTime >= this.pointTimes[lastIdx]) {
+				if (lastIdx > 0)
+					return this.getChartSegmentSpeedValue(points[lastIdx - 1], points[lastIdx])
+				return this.getChartSpeedValue(points[0])
+			}
+
+			for (let i = 0; i < lastIdx; i++) {
+				const t0 = this.pointTimes[i]
+				const t1 = this.pointTimes[i + 1]
+				if (absoluteTime >= t0 && absoluteTime <= t1) {
+					const p0 = points[i]
+					const p1 = points[i + 1]
+					if (this.isStationarySegment(p0, p1, t0, t1))
+						return 0
+					return this.getChartSegmentSpeedValue(points[i], points[i + 1])
+				}
+			}
+
+			return 0
+		},
+		getInterpolatedDistanceKm(trackTimeMs) {
+			const points = this.mapTrackPoints
+			if (!points.length)
+				return 0
+
+			const state = this.getStateAtTrackTime(trackTimeMs)
+			let total = 0
+
+			for (let i = 0; i < state.segmentIndex; i++) {
+				const p0 = points[i]
+				const p1 = points[i + 1]
+				if (this.isStationarySegment(p0, p1, this.pointTimes[i], this.pointTimes[i + 1]))
+					continue
+				if (this.isUnknownGapSegment(p0, p1))
+					continue
+				total += this.haversineKm(p0.lat, p0.lon, p1.lat, p1.lon)
+			}
+
+			const segStart = points[state.segmentIndex]
+			const segEnd = points[state.segmentIndex + 1]
+			if (segEnd && state.segmentT > 0 &&
+				!this.isStationarySegment(
+					segStart,
+					segEnd,
+					this.pointTimes[state.segmentIndex],
+					this.pointTimes[state.segmentIndex + 1],
+				) &&
+				!this.isUnknownGapSegment(segStart, segEnd))
+				total += this.haversineKm(segStart.lat, segStart.lon, segEnd.lat, segEnd.lon) * state.segmentT
+
+			return total
 		},
 		shouldKeepSamePlacePoint(prev, point) {
 			if (prev.pointType === 'stationary_start' && point.pointType === 'stationary_end')
 				return true
 			if (prev.pointType === 'stationary_end' && point.pointType === 'stationary_start')
 				return true
+			if (prev.pointType === 'unknown_gap_start' && point.pointType === 'unknown_gap_end')
+				return true
 			return false
 		},
-		getChartSpeedValue(point) {
-			if (point?.pointType === 'stationary_start' ||
+		isUnknownGapPoint(point) {
+			return point?.pointType === 'unknown_gap_start' ||
+				point?.pointType === 'unknown_gap_end'
+		},
+		isUnknownGapSegment(p0, p1) {
+			return this.isUnknownGapPoint(p0) || this.isUnknownGapPoint(p1)
+		},
+		isSamePlace(p0, p1) {
+			if (!p0 || !p1 || p0.lat == null || p0.lon == null || p1.lat == null || p1.lon == null)
+				return false
+
+			return Math.abs(p0.lat - p1.lat) < 1e-5 && Math.abs(p0.lon - p1.lon) < 1e-5
+		},
+		isStationarySegment(p0, p1, t0, t1) {
+			if (p0?.pointType === 'unknown_gap_end' && p1 && !this.isUnknownGapPoint(p1))
+				return false
+
+			if (this.isStationaryChartPoint(p0) || this.isStationaryChartPoint(p1))
+				return true
+
+			if (p0?.pointType === 'unknown_gap_start' && p1?.pointType === 'unknown_gap_end')
+				return true
+
+			if (this.isSamePlace(p0, p1))
+				return true
+
+			const gapMs = Math.max(0, t1 - t0)
+			if (gapMs < PLAYBACK_GAP_HOLD_MS)
+				return false
+
+			return this.haversineKm(p0.lat, p0.lon, p1.lat, p1.lon) <= PLAYBACK_STATIONARY_DISTANCE_KM
+		},
+		buildHoldPlaybackState(points, pointIndex, trackTimeMs) {
+			const point = points[pointIndex]
+			return {
+				lat: point.lat,
+				lon: point.lon,
+				direction: this.resolvePointBearing(points, pointIndex),
+				time: point.timeLocal,
+				speed: this.getPointSpeed(point),
+				progress: trackTimeMs / this.totalDuration,
+				segmentIndex: Math.max(0, pointIndex),
+				segmentT: 0,
+			}
+		},
+		isStationaryChartPoint(point) {
+			return point?.pointType === 'stationary_start' ||
 				point?.pointType === 'stationary_end' ||
-				point?.pointType === 'heartbeat')
+				point?.pointType === 'heartbeat' ||
+				point?.pointType === 'unknown_gap_start' ||
+				point?.pointType === 'unknown_gap_end'
+		},
+		getChartSpeedValue(point) {
+			if (this.isStationaryChartPoint(point))
+				return 0
+			return this.getPointSpeedValue(point)
+		},
+		getChartSegmentSpeedValue(point, nextPoint) {
+			if (this.isStationaryChartPoint(point) || this.isStationaryChartPoint(nextPoint))
 				return 0
 			return this.getPointSpeedValue(point)
 		},
@@ -951,14 +1381,197 @@ export default {
 			return this.bearingFromTo(p0.lat, p0.lon, p1.lat, p1.lon) ??
 				this.resolvePointBearing(points, segmentIndex + 1)
 		},
-		buildTimeline() {
+		dedupeTrackPoints(points) {
+			const valid = (points || []).filter((p) => p.lat != null && p.lon != null)
+			const deduped = []
+			for (const point of valid) {
+				const prev = deduped[deduped.length - 1]
+				if (prev &&
+					Math.abs(prev.lat - point.lat) < 1e-6 &&
+					Math.abs(prev.lon - point.lon) < 1e-6 &&
+					!this.shouldKeepSamePlacePoint(prev, point))
+					continue
+				deduped.push(point)
+			}
+			return deduped
+		},
+		trackPointsEqual(a, b) {
+			if (!a || !b || a.lat == null || b.lat == null || a.lon == null || b.lon == null)
+				return false
+
+			if (Math.abs(a.lat - b.lat) >= 1e-6 || Math.abs(a.lon - b.lon) >= 1e-6)
+				return false
+
+			if (this.parsePointTime(a) !== this.parsePointTime(b))
+				return false
+
+			return (a.pointType || '') === (b.pointType || '')
+		},
+		compareTrackExtension(oldPoints, newPoints) {
+			if (!oldPoints.length)
+				return { type: 'full' }
+
+			if (newPoints.length < oldPoints.length)
+				return { type: 'full' }
+
+			for (let i = 0; i < oldPoints.length; i++) {
+				if (!this.trackPointsEqual(oldPoints[i], newPoints[i]))
+					return { type: 'full' }
+			}
+
+			if (newPoints.length === oldPoints.length)
+				return { type: 'none' }
+
+			return {
+				type: 'append',
+				fromIndex: oldPoints.length,
+				added: newPoints.slice(oldPoints.length),
+			}
+		},
+		tryIncrementalTrackUpdate(newTrack) {
+			if (!this.map || !this.staticLayer || !this.track)
+				return false
+
+			const oldPoints = this.dedupeTrackPoints(this.track.points)
+			const newPoints = this.dedupeTrackPoints(newTrack.points)
+			const comparison = this.compareTrackExtension(oldPoints, newPoints)
+
+			if (comparison.type === 'full')
+				return false
+
+			this.track = newTrack
+
+			if (comparison.type === 'append')
+				this.appendTrackPoints(newPoints)
+			else {
+				this.extendTimeline()
+				this.$nextTick(() => this.scheduleDrawSpeedChart())
+			}
+
+			this.syncAppliedDates()
+			return true
+		},
+		extendTimeline() {
 			const points = this.mapTrackPoints
 			this.pointTimes = points.map((p) => this.parsePointTime(p))
-			if (points.length < 2) {
-				this.totalDuration = 0
+
+			const timelineStart = this.getTimelineStartMs()
+			const timelineEnd = Math.max(timelineStart + 1, this.getTimelineEndMs())
+			this.totalDuration = Math.max(1, timelineEnd - timelineStart)
+			this.normalizeChartView()
+		},
+		appendTrackPoints(newPoints) {
+			this.extendTimeline()
+			this.renderBackgroundTrackLayers(newPoints)
+
+			const last = newPoints[newPoints.length - 1]
+			if (this.endMarker) {
+				this.endMarker.setLatLng([last.lat, last.lon])
+				this.endMarker.setPopupContent(this.pointPopup(last, 'Финиш'))
+			}
+
+			this.$nextTick(() => this.scheduleDrawSpeedChart())
+		},
+		clearBackgroundTrackLayers() {
+			if (this.backgroundLine) {
+				this.staticLayer.removeLayer(this.backgroundLine)
+				this.backgroundLine = null
+			}
+
+			if (this.backgroundGapLayer) {
+				this.staticLayer.removeLayer(this.backgroundGapLayer)
+				this.backgroundGapLayer = null
+			}
+		},
+		renderBackgroundTrackLayers(points) {
+			this.clearBackgroundTrackLayers()
+
+			if (!points.length)
+				return
+
+			const solidLatLngs = []
+
+			for (let i = 0; i < points.length - 1; i++) {
+				const p0 = points[i]
+				const p1 = points[i + 1]
+				const segment = [[p0.lat, p0.lon], [p1.lat, p1.lon]]
+
+				if (this.isUnknownGapSegment(p0, p1)) {
+					if (!this.backgroundGapLayer) {
+						this.backgroundGapLayer = L.layerGroup()
+						this.staticLayer.addLayer(this.backgroundGapLayer)
+					}
+
+					L.polyline(segment, {
+						color: '#64748b',
+						weight: 3,
+						opacity: 0.5,
+						dashArray: '7 9',
+					}).addTo(this.backgroundGapLayer)
+					continue
+				}
+
+				if (!solidLatLngs.length)
+					solidLatLngs.push(segment[0])
+				solidLatLngs.push(segment[1])
+			}
+
+			if (solidLatLngs.length === 1) {
+				this.backgroundLine = L.circle(solidLatLngs[0], {
+					radius: 35,
+					color: '#64748b',
+					weight: 2,
+					opacity: 0.7,
+					fillColor: '#64748b',
+					fillOpacity: 0.12,
+				}).addTo(this.staticLayer)
 				return
 			}
-			this.totalDuration = Math.max(1, this.pointTimes[this.pointTimes.length - 1] - this.pointTimes[0])
+
+			if (solidLatLngs.length >= 2) {
+				this.backgroundLine = L.polyline(solidLatLngs, {
+					color: '#64748b',
+					weight: 4,
+					opacity: 0.45,
+				})
+				this.staticLayer.addLayer(this.backgroundLine)
+			}
+		},
+		updateStaticTrackLayers(points) {
+			this.startMarker = null
+			this.endMarker = null
+
+			this.renderBackgroundTrackLayers(points)
+
+			const first = points[0]
+			const last = points[points.length - 1]
+
+			this.startMarker = L.marker([first.lat, first.lon], { icon: startIcon })
+				.bindPopup(this.pointPopup(first, this.getTrackPointLabel(first, 'Старт')))
+				.addTo(this.staticLayer)
+
+			this.endMarker = L.marker([last.lat, last.lon], { icon: endIcon })
+				.bindPopup(this.pointPopup(last, this.getTrackPointLabel(last, 'Финиш')))
+				.addTo(this.staticLayer)
+		},
+		getTrackPointLabel(point, fallback) {
+			if (point?.pointType === 'unknown_gap_start')
+				return 'Стоянка · последняя известная точка'
+			if (point?.pointType === 'unknown_gap_end')
+				return 'Стоянка · до первой точки движения'
+			return fallback
+		},
+		buildTimeline(options = {}) {
+			const points = this.mapTrackPoints
+			this.pointTimes = points.map((p) => this.parsePointTime(p))
+
+			const timelineStart = this.getTimelineStartMs()
+			const timelineEnd = Math.max(timelineStart + 1, this.getTimelineEndMs())
+			this.totalDuration = Math.max(1, timelineEnd - timelineStart)
+
+			if (!options.preserveChartView)
+				this.resetChartView()
+
 			this.normalizeChartView()
 		},
 		resetChartView() {
@@ -1106,8 +1719,21 @@ export default {
 		},
 		getStateAtTrackTime(trackTimeMs) {
 			const points = this.mapTrackPoints
-			const baseTime = this.pointTimes[0]
-			const absoluteTime = baseTime + trackTimeMs
+			const timelineStart = this.getTimelineStartMs()
+			const absoluteTime = timelineStart + trackTimeMs
+
+			if (!points.length) {
+				return {
+					lat: 0,
+					lon: 0,
+					direction: 0,
+					time: '',
+					speed: null,
+					progress: 0,
+					segmentIndex: 0,
+					segmentT: 0,
+				}
+			}
 
 			if (absoluteTime <= this.pointTimes[0]) {
 				const p = points[0]
@@ -1142,10 +1768,13 @@ export default {
 				const t0 = this.pointTimes[i]
 				const t1 = this.pointTimes[i + 1]
 				if (absoluteTime >= t0 && absoluteTime <= t1) {
-					const segDur = Math.max(1, t1 - t0)
-					const t = (absoluteTime - t0) / segDur
 					const p0 = points[i]
 					const p1 = points[i + 1]
+					if (this.isStationarySegment(p0, p1, t0, t1))
+						return this.buildHoldPlaybackState(points, i, trackTimeMs)
+
+					const segDur = Math.max(1, t1 - t0)
+					const t = (absoluteTime - t0) / segDur
 					return {
 						lat: p0.lat + (p1.lat - p0.lat) * t,
 						lon: p0.lon + (p1.lon - p0.lon) * t,
@@ -1159,31 +1788,38 @@ export default {
 				}
 			}
 
-			const p = points[lastIdx]
-			return {
-				lat: p.lat,
-				lon: p.lon,
-				direction: this.resolvePointBearing(points, lastIdx),
-				time: p.timeLocal,
-				speed: this.getPointSpeed(p),
-				progress: 1,
-				segmentIndex: lastIdx - 1,
-				segmentT: 1,
+			let holdIdx = 0
+			for (let i = 0; i <= lastIdx; i++) {
+				if (this.pointTimes[i] <= absoluteTime)
+					holdIdx = i
 			}
+
+			return this.buildHoldPlaybackState(points, holdIdx, trackTimeMs)
 		},
 		getProgressLatLngs(state) {
 			const points = this.mapTrackPoints
 			const latLngs = []
-			for (let i = 0; i <= state.segmentIndex; i++)
-				latLngs.push([points[i].lat, points[i].lon])
+
+			for (let i = 0; i < state.segmentIndex; i++) {
+				const p0 = points[i]
+				const p1 = points[i + 1]
+				if (!latLngs.length)
+					latLngs.push([p0.lat, p0.lon])
+				latLngs.push([p1.lat, p1.lon])
+			}
 
 			const p0 = points[state.segmentIndex]
 			const p1 = points[state.segmentIndex + 1]
-			if (p1 && state.segmentT > 0)
-				latLngs.push([
-					p0.lat + (p1.lat - p0.lat) * state.segmentT,
-					p0.lon + (p1.lon - p0.lon) * state.segmentT,
-				])
+			if (!latLngs.length && p0)
+				latLngs.push([p0.lat, p0.lon])
+
+			if (!p1 || state.segmentT <= 0)
+				return latLngs
+
+			latLngs.push([
+				p0.lat + (p1.lat - p0.lat) * state.segmentT,
+				p0.lon + (p1.lon - p0.lon) * state.segmentT,
+			])
 
 			return latLngs
 		},
@@ -1201,17 +1837,18 @@ export default {
 			const pointIndex = state.segmentT >= 0.5
 				? Math.min(points.length - 1, state.segmentIndex + 1)
 				: state.segmentIndex
+			const latLngs = this.getProgressLatLngs(state)
 
 			this.playbackInfo = {
-				time: state.time,
-				speed: state.speed,
+				time: this.formatPlaybackTime(this.playbackTrackTime),
+				distance: this.formatDistanceKm(this.getInterpolatedDistanceKm(this.playbackTrackTime)),
+				speed: this.formatPlaybackSpeedValue(this.getChartSpeedAtTrackTime(this.playbackTrackTime)),
 				geofences: this.formatPointGeofences(points[pointIndex]),
 			}
 
 			if (!this.scrubbing)
 				this.scrubberValue = Math.round(state.progress * 1000)
 
-			const latLngs = this.getProgressLatLngs(state)
 			if (this.progressLine)
 				this.progressLine.setLatLngs(latLngs)
 
@@ -1411,7 +2048,7 @@ export default {
 				return { stepMs: 0, ticks: [] }
 			}
 
-			const trackBase = this.pointTimes[0]
+			const trackBase = this.getTimelineStartMs()
 			const viewStart = this.getChartViewStartMs()
 			const viewSpan = this.getChartViewSpanMs()
 			const baseTime = trackBase + viewStart
@@ -1482,7 +2119,7 @@ export default {
 
 			const padY = 0
 			const chartH = height - padY * 2
-			const trackBase = this.pointTimes[0]
+			const trackBase = this.getTimelineStartMs()
 			const viewStart = this.getChartViewStartMs()
 			const viewSpan = this.getChartViewSpanMs()
 			const baseTime = trackBase + viewStart
@@ -1510,7 +2147,8 @@ export default {
 			}
 
 			const points = this.mapTrackPoints
-			const speeds = points.map((p) => this.getChartSpeedValue(p))
+			const speeds = points.map((p, i) =>
+				this.getChartSegmentSpeedValue(p, points[i + 1]))
 			const steps = []
 			for (let i = 0; i < points.length; i++) {
 				const t0 = this.pointTimes[i] - trackBase
@@ -1653,6 +2291,9 @@ export default {
 			}
 		},
 		onChartPointerDown(e) {
+			if (this.loading || !this.hasTrack)
+				return
+
 			this.chartDragging = true
 			this.seekChartFromEvent(e.clientX, e.currentTarget)
 			window.addEventListener('mousemove', this.onChartPointerMove)
@@ -1673,6 +2314,9 @@ export default {
 			}
 		},
 		onChartTouchStart(e) {
+			if (this.loading || !this.hasTrack)
+				return
+
 			const touch = e.touches[0]
 			if (!touch) return
 			this.chartDragging = true
@@ -1707,11 +2351,12 @@ export default {
 			if (this.map) return
 
 			this.map = L.map(this.$refs.mapEl, {
-				zoomControl: true,
+				zoomControl: false,
+				attributionControl: false,
 			}).setView([43.24, 76.86], 13)
 
 			L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-				attribution: '&copy; OpenStreetMap',
+				attribution: '',
 				maxZoom: 19,
 			}).addTo(this.map)
 
@@ -2443,8 +3088,12 @@ export default {
 			this.applyPlaybackState(nextTime)
 			this.animFrameId = requestAnimationFrame((ts) => this.tick(ts))
 		},
+		onTrackModeChange() {
+			this.loadTrack()
+		},
 		async loadTrack(options = {}) {
 			const silent = options.silent === true
+			const applySmartFrom = options.applySmartFrom === true
 
 			if (this.refreshInFlight)
 				return
@@ -2465,9 +3114,24 @@ export default {
 				const params = {}
 				if (this.from) params.from = this.toApiDateTime(this.from)
 				if (this.to) params.to = this.toApiDateTime(this.to)
+				if (!this.optimizedTrack) params.raw = true
 
-				this.track = await getTrack(this.deviceId, params)
+				const newTrack = await getTrack(this.deviceId, params)
+
+				if (silent && this.tryIncrementalTrackUpdate(newTrack)) {
+					this.syncAppliedDates()
+					return
+				}
+
+				this.track = newTrack
 				this.renderTrack({ silent })
+
+				if (applySmartFrom && this.tryApplySmartFromFilter()) {
+					await this.loadTrack()
+					return
+				}
+
+				this.syncAppliedDates()
 			} catch (e) {
 				if (!silent) {
 					this.error = e.message || 'Не удалось загрузить трек'
@@ -2485,86 +3149,62 @@ export default {
 		renderTrack(options = {}) {
 			const silent = options.silent === true
 			const playbackState = silent ? this.capturePlaybackState() : null
+			const hasPlaybackLayers = silent && !!this.progressLine
 
 			if (!this.map || !this.staticLayer) return
 
-			if (this.animFrameId) {
-				cancelAnimationFrame(this.animFrameId)
-				this.animFrameId = null
+			if (!silent) {
+				if (this.animFrameId) {
+					cancelAnimationFrame(this.animFrameId)
+					this.animFrameId = null
+				}
+				this.resetPlaybackLayers()
 			}
 
 			this.staticLayer.clearLayers()
 
-			if (silent) {
-				this.playbackLayer?.clearLayers()
-				this.progressLine = null
-				this.vehicleMarker = null
-				this.playing = false
-				this.lastFrameTime = 0
-			} else {
-				this.resetPlaybackLayers()
-			}
-
 			const points = this.mapTrackPoints
 			if (!points.length) {
-				if (!silent)
+				if (!silent) {
 					this.error = 'Нет точек за выбранный период'
+					this.resetPlaybackLayers()
+				}
 				return
 			}
 
-			if (silent)
-				this.error = ''
+			this.error = ''
 
-			this.buildTimeline()
+			this.buildTimeline({ preserveChartView: silent })
+			this.updateStaticTrackLayers(points)
+
 			const latLngs = points.map((p) => [p.lat, p.lon])
-			const sameLocation = this.isSameTrackLocation(latLngs)
-
-			if (sameLocation) {
-				L.circle(latLngs[0], {
-					radius: 35,
-					color: '#64748b',
-					weight: 2,
-					opacity: 0.7,
-					fillColor: '#64748b',
-					fillOpacity: 0.12,
-				}).addTo(this.staticLayer)
-			} else {
-				this.backgroundLine = L.polyline(latLngs, {
-					color: '#64748b',
-					weight: 4,
-					opacity: 0.45,
-				})
-				this.staticLayer.addLayer(this.backgroundLine)
-			}
-
-			const first = points[0]
-			const last = points[points.length - 1]
-
-			L.marker([first.lat, first.lon], { icon: startIcon })
-				.bindPopup(this.pointPopup(first, 'Старт'))
-				.addTo(this.staticLayer)
-
-			L.marker([last.lat, last.lon], { icon: endIcon })
-				.bindPopup(this.pointPopup(last, 'Финиш'))
-				.addTo(this.staticLayer)
 
 			this.$nextTick(() => {
-				if (!silent)
+				if (!silent) {
 					this.fitTrackOnMap(latLngs)
-
-				if (silent && playbackState)
+					this.initPlayback()
+				} else if (hasPlaybackLayers)
+					this.applyPlaybackState(this.playbackTrackTime)
+				else if (playbackState)
 					this.restorePlaybackState(playbackState)
 				else
 					this.initPlayback()
 
-				this.$nextTick(() => this.handleMapResize())
+				this.$nextTick(() => {
+					if (silent)
+						this.scheduleDrawSpeedChart()
+					this.handleMapResize()
+				})
 			})
 		},
 		pointPopup(point, label) {
 			const title = label ? `<strong>${label}</strong><br>` : ''
 			const speed = this.getPointSpeed(point) ?? '—'
 			const geofences = this.formatPointGeofences(point)
-			return `${title}${point.timeLocal}<br>Скорость: ${speed}<br>Высота: ${point.alt ?? '—'} м<br>Геозоны: ${geofences}`
+			const gapNote = this.isUnknownGapPoint(point)
+				? '<br><em>Местоположение между точками неизвестно</em>'
+				: ''
+			return `${title}${point.timeLocal}<br>Скорость: ${speed}<br>Высота: ${point.alt ?? '—'} м<br>Геозоны: ${geofences}${gapNote}`
 		},
 	},
 }
@@ -2581,6 +3221,10 @@ export default {
 	width: 100%;
 	background: #1a2332;
 	font-family: inherit;
+}
+
+.map-leaflet :deep(.leaflet-control-container) {
+	display: none;
 }
 
 .map-leaflet :deep(.vehicle-marker) {

@@ -442,6 +442,21 @@ body {
 	flex-shrink: 0;
 }
 
+.apply-btn-enter-active,
+.apply-btn-leave-active {
+	transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.apply-btn-enter-from,
+.apply-btn-leave-to {
+	opacity: 0;
+	transform: scale(0.92);
+}
+
+.map-apply-btn {
+	flex-shrink: 0;
+}
+
 .map-bar .btn-ghost.btn-compact {
 	padding: 6px 8px;
 }
@@ -676,6 +691,43 @@ body {
 	z-index: 1002;
 	background: var(--surface);
 	border-top: 1px solid var(--border);
+	position: relative;
+}
+
+.speed-chart-panel--loading .playback-main {
+	opacity: 0.45;
+	pointer-events: none;
+}
+
+.speed-chart-spinner {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 2;
+	pointer-events: none;
+}
+
+.speed-chart-spinner::after {
+	content: '';
+	width: 22px;
+	height: 22px;
+	border: 2px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: speed-chart-spin 0.7s linear infinite;
+}
+
+@keyframes speed-chart-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.playback-chart-speed-area--disabled {
+	cursor: default;
+	pointer-events: none;
 }
 
 .playback-main {
@@ -691,7 +743,7 @@ body {
 	align-items: center;
 	justify-content: flex-start;
 	gap: 6px;
-	width: 72px;
+	width: 88px;
 }
 
 .playback-btn {
@@ -710,9 +762,14 @@ body {
 	justify-content: center;
 }
 
-.playback-btn:hover {
+.playback-btn:hover:not(:disabled) {
 	border-color: var(--accent);
 	color: var(--accent);
+}
+
+.playback-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
 }
 
 .playback-speed {
@@ -730,6 +787,80 @@ body {
 	line-height: 1;
 	margin-bottom: 6px;
 	text-align: center;
+}
+
+.playback-track-mode {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.playback-track-points-count {
+	font-size: 0.65rem;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	line-height: 1;
+	min-width: 2ch;
+	text-align: right;
+}
+
+.playback-track-switch {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 18px;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
+.playback-track-switch input {
+	position: absolute;
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+
+.playback-track-switch-slider {
+	position: absolute;
+	inset: 0;
+	border-radius: 999px;
+	background: var(--border);
+	transition: background 0.2s ease;
+}
+
+.playback-track-switch-slider::before {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+	transition: transform 0.2s ease;
+}
+
+.playback-track-switch input:checked + .playback-track-switch-slider {
+	background: var(--accent);
+}
+
+.playback-track-switch input:checked + .playback-track-switch-slider::before {
+	transform: translateX(16px);
+}
+
+.playback-track-switch input:focus-visible + .playback-track-switch-slider {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.playback-track-switch input:disabled + .playback-track-switch-slider {
+	opacity: 0.45;
+	cursor: not-allowed;
 }
 
 .speed-chart-panel .playback-chart-body {
@@ -853,11 +984,37 @@ body {
 	white-space: nowrap;
 }
 
-.playback-info-speed {
-	color: var(--text-muted);
-	font-size: 0.7rem;
+.playback-info-stats {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 16px;
 	margin-top: 2px;
+}
+
+.playback-info-distance {
+	color: var(--text);
+	font-weight: 600;
 	white-space: nowrap;
+}
+
+.playback-info-speed {
+	display: flex;
+	align-items: baseline;
+	gap: 4px;
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.playback-info-speed-value {
+	color: var(--text);
+	font-weight: 600;
+}
+
+.playback-info-speed-unit {
+	color: var(--text-muted);
+	font-size: 0.65rem;
+	font-weight: 500;
 }
 
 .map-error {
@@ -1083,8 +1240,12 @@ body {
 		font-size: 0.65rem;
 	}
 
-	.playback-info-speed {
-		font-size: 0.6rem;
+	.playback-info-stats {
+		gap: 12px;
+	}
+
+	.playback-info-speed-unit {
+		font-size: 0.55rem;
 	}
 
 	.devices-page {
