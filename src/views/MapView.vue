@@ -297,6 +297,7 @@
 					<div class="playback-info-time">{{ playbackInfo.time }}</div>
 					<div class="playback-info-stats">
 						<div class="playback-info-distance">{{ playbackInfo.distance }}</div>
+						<div class="playback-info-points">{{ playbackInfo.points }}</div>
 						<div class="playback-info-speed">
 							<span class="playback-info-speed-value">{{ playbackInfo.speed }}</span>
 							<span class="playback-info-speed-unit">км/ч</span>
@@ -1175,6 +1176,12 @@ export default {
 				return Number(value.toFixed(1)).toString()
 			return String(Math.round(value))
 		},
+		formatPlaybackPoints(pointIndex, total) {
+			if (!total)
+				return '0/0'
+
+			return `${Math.min(total, pointIndex + 1)}/${total}`
+		},
 		formatPlaybackTime(trackTimeMs) {
 			const absoluteMs = this.getTimelineStartMs() + trackTimeMs
 			const d = new Date(absoluteMs)
@@ -1255,7 +1262,8 @@ export default {
 				point?.pointType === 'unknown_gap_end'
 		},
 		isUnknownGapSegment(p0, p1) {
-			return this.isUnknownGapPoint(p0) || this.isUnknownGapPoint(p1)
+			return p0?.pointType === 'unknown_gap_start' &&
+				p1?.pointType === 'unknown_gap_end'
 		},
 		isSamePlace(p0, p1) {
 			if (!p0 || !p1 || p0.lat == null || p0.lon == null || p1.lat == null || p1.lon == null)
@@ -1752,6 +1760,14 @@ export default {
 				if (absoluteTime >= t0 && absoluteTime <= t1) {
 					const p0 = points[i]
 					const p1 = points[i + 1]
+
+					if (p0?.pointType === 'unknown_gap_end' && p1 && !this.isUnknownGapPoint(p1)) {
+						if (absoluteTime >= t1)
+							return this.buildHoldPlaybackState(points, i + 1, trackTimeMs)
+
+						return this.buildHoldPlaybackState(points, i, trackTimeMs)
+					}
+
 					if (this.isStationarySegment(p0, p1, t0, t1))
 						return this.buildHoldPlaybackState(points, i, trackTimeMs)
 
@@ -1824,6 +1840,7 @@ export default {
 			this.playbackInfo = {
 				time: this.formatPlaybackTime(this.playbackTrackTime),
 				distance: this.formatDistanceKm(this.getInterpolatedDistanceKm(this.playbackTrackTime)),
+				points: this.formatPlaybackPoints(pointIndex, points.length),
 				speed: this.formatPlaybackSpeedValue(this.getChartSpeedAtTrackTime(this.playbackTrackTime)),
 				geofences: this.formatPointGeofences(points[pointIndex]),
 			}

@@ -998,6 +998,12 @@ body {
 	white-space: nowrap;
 }
 
+.playback-info-points {
+	color: var(--text-muted);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
 .playback-info-speed {
 	display: flex;
 	align-items: baseline;
