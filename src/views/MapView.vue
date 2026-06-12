@@ -392,7 +392,6 @@
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { getTrack, getGeofences, createGeofence, updateGeofence, deleteGeofence } from '@/api/client'
-import autoRefreshMixin from '@/mixins/autoRefresh'
 
 const PLAYBACK_SPEED_MIN = 60
 const PLAYBACK_SPEED_MAX = 10800
@@ -551,7 +550,6 @@ function createGeozoneDraftPointsCanvasLayer(vm) {
 
 export default {
 	name: 'MapView',
-	mixins: [autoRefreshMixin],
 	data() {
 		return {
 			menuOpen: false,
@@ -563,7 +561,6 @@ export default {
 			appliedFrom: '',
 			appliedTo: '',
 			dateInputSegment: null,
-			autoRefreshMs: 10000,
 			refreshInFlight: false,
 			track: null,
 			startMarker: null,
@@ -862,21 +859,6 @@ export default {
 				this.from = this.toLocalInput(this.startOfDay(this.addDays(now, -6)))
 			else if (this.periodPreset === 'lastMonth')
 				this.from = this.toLocalInput(this.startOfDay(this.addDays(now, -29)))
-		},
-		canAutoRefresh() {
-			if (this.loading || this.refreshInFlight || this.chartDragging)
-				return false
-			if (this.geozoneAdding || this.geozoneEditingId != null)
-				return false
-			if (this._geozoneDragPointIndex != null)
-				return false
-			return true
-		},
-		async onAutoRefresh() {
-			if (!this.canAutoRefresh())
-				return
-
-			await this.loadTrack({ silent: true })
 		},
 		capturePlaybackState() {
 			return {

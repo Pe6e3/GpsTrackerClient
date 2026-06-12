@@ -845,20 +845,20 @@ body {
 	transition: transform 0.2s ease;
 }
 
-.playback-track-switch input:checked + .playback-track-switch-slider {
+.playback-track-switch input:checked+.playback-track-switch-slider {
 	background: var(--accent);
 }
 
-.playback-track-switch input:checked + .playback-track-switch-slider::before {
+.playback-track-switch input:checked+.playback-track-switch-slider::before {
 	transform: translateX(16px);
 }
 
-.playback-track-switch input:focus-visible + .playback-track-switch-slider {
+.playback-track-switch input:focus-visible+.playback-track-switch-slider {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
 
-.playback-track-switch input:disabled + .playback-track-switch-slider {
+.playback-track-switch input:disabled+.playback-track-switch-slider {
 	opacity: 0.45;
 	cursor: not-allowed;
 }
