@@ -1768,8 +1768,14 @@ export default {
 						return this.buildHoldPlaybackState(points, i, trackTimeMs)
 					}
 
-					if (this.isStationarySegment(p0, p1, t0, t1))
+					if (this.isStationarySegment(p0, p1, t0, t1)) {
+						if (p0?.pointType === 'unknown_gap_start' &&
+							p1?.pointType === 'unknown_gap_end' &&
+							absoluteTime >= t1)
+							return this.buildHoldPlaybackState(points, i + 1, trackTimeMs)
+
 						return this.buildHoldPlaybackState(points, i, trackTimeMs)
+					}
 
 					const segDur = Math.max(1, t1 - t0)
 					const t = (absoluteTime - t0) / segDur
